@@ -1,0 +1,1246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OLM Viewer</title>
+<style>
+:root {
+  --bg: #ffffff; --side: #f4f4f6; --panel: #fafafb; --border: #e2e2e7; --text: #1d1d1f;
+  --muted: #6e6e73; --faint: #a1a1a6; --accent: #0a66e4; --accent-soft: rgba(10,102,228,.12);
+  --hover: rgba(0,0,0,.045); --chip: #f0f0f3; --warn: #fff4d6; --warn-text: #6b4e00;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e; --side: #232325; --panel: #202022; --border: #38383b; --text: #f2f2f7;
+    --muted: #a1a1a6; --faint: #6e6e73; --accent: #4c94ff; --accent-soft: rgba(76,148,255,.2);
+    --hover: rgba(255,255,255,.05); --chip: #2c2c2e; --warn: #3a3016; --warn-text: #f3d58a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+  color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; overflow: hidden;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
+svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- welcome ---------- */
+#welcome { height: 100%; display: grid; place-items: center; padding: 24px; background: var(--side); }
+.drop {
+  width: min(560px, 100%); text-align: center; padding: 48px 40px; border-radius: 18px;
+  border: 2px dashed var(--border); background: var(--bg); transition: border-color .15s, background .15s;
+}
+.drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop .logo { width: 56px; height: 56px; color: var(--accent); stroke-width: 1.3; }
+.drop h1 { font-size: 26px; margin: 12px 0 6px; letter-spacing: -.01em; }
+.drop p { color: var(--muted); margin: 0 0 18px; font-size: 14px; }
+.btn {
+  border: 1px solid var(--border); background: var(--bg); border-radius: 7px; padding: 5px 11px;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 9px 20px; font-size: 14px; font-weight: 500; border-radius: 9px; }
+.btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+.drop .hint { margin-top: 12px; font-size: 13px; }
+.drop .privacy { margin-top: 26px; font-size: 12px; color: var(--muted); display: flex; gap: 8px; justify-content: center; align-items: center; }
+.drop .help { margin-top: 18px; font-size: 12px; color: var(--faint); }
+.errorbox { margin-top: 18px; padding: 10px 12px; border-radius: 8px; background: var(--warn); color: var(--warn-text); font-size: 13px; text-align: left; }
+
+/* ---------- app shell ---------- */
+#app { height: 100%; display: flex; flex-direction: column; }
+#toolbar {
+  height: 52px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 14px;
+  border-bottom: 1px solid var(--border); background: var(--side); position: relative;
+}
+#fileinfo { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+#fname { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search { display: flex; align-items: center; gap: 10px; }
+.search .box { position: relative; }
+.search .box svg { position: absolute; left: 8px; top: 7px; color: var(--muted); width: 14px; height: 14px; }
+#q {
+  width: 280px; padding: 5px 10px 5px 28px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font: inherit; outline: none;
+}
+#q:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.search label { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer; }
+#progress { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; }
+#progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+#panes { flex: 1; display: flex; min-height: 0; }
+#sidebar { width: 230px; flex: none; overflow-y: auto; background: var(--side); border-right: 1px solid var(--border); padding: 8px 8px 24px; }
+.nav-section { font-size: 11px; font-weight: 600; color: var(--muted); padding: 14px 8px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-item {
+  display: flex; align-items: center; gap: 7px; padding: 4px 8px; border-radius: 6px; cursor: default;
+  white-space: nowrap; user-select: none; color: var(--text);
+}
+.nav-item:hover { background: var(--hover); }
+.nav-item.active { background: var(--accent-soft); }
+.nav-item.active svg { color: var(--accent); }
+.nav-item svg { color: var(--muted); }
+.nav-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.nav-item .count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.nav-item .count.unread { color: var(--text); font-weight: 600; }
+
+#listpane { width: 360px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--border); min-width: 0; background: var(--bg); }
+#listhead { height: 38px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border); gap: 8px; }
+#listtitle { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#listtitle small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+#sort { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 3px 6px; border-radius: 5px; white-space: nowrap; }
+#sort:hover { background: var(--hover); }
+#listscroll { flex: 1; overflow-y: auto; position: relative; outline: none; }
+#spacer { position: relative; }
+.row {
+  position: absolute; left: 0; right: 0; height: 72px; padding: 9px 12px 9px 22px;
+  border-bottom: 1px solid var(--border); cursor: default; overflow: hidden;
+}
+.row:hover { background: var(--hover); }
+.row.sel { background: var(--accent-soft); }
+.row.unread::before { content: ""; position: absolute; left: 8px; top: 15px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.row .l1 { display: flex; gap: 8px; align-items: baseline; }
+.row .who { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .when { color: var(--muted); font-size: 12px; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+.row .when svg { width: 12px; height: 12px; }
+.row .subj { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .prev { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+#listempty { padding: 40px 20px; text-align: center; color: var(--muted); }
+
+#reader { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+.empty { margin: auto; color: var(--faint); font-size: 15px; text-align: center; padding: 20px; }
+.msg-head { flex: none; padding: 18px 22px 12px; border-bottom: 1px solid var(--border); }
+.msg-actions { display: flex; gap: 6px; justify-content: flex-end; margin-bottom: 6px; flex-wrap: wrap; }
+.msg-actions .btn { font-size: 12px; }
+.subject { font-size: 19px; font-weight: 650; margin: 0 0 12px; line-height: 1.3; word-wrap: break-word; letter-spacing: -.005em; }
+.who-block { display: flex; gap: 12px; align-items: flex-start; }
+.avatar { width: 38px; height: 38px; border-radius: 50%; flex: none; display: grid; place-items: center; color: #fff; font-weight: 600; font-size: 14px; }
+.who-text { flex: 1; min-width: 0; }
+.who-text .from { font-weight: 600; word-break: break-word; }
+.who-text .addr { color: var(--muted); font-weight: 400; }
+.who-text .rcpt { color: var(--muted); font-size: 12px; margin-top: 2px; word-break: break-word; }
+.who-text .rcpt b { font-weight: 500; color: var(--text); }
+.who-text .more { border: 0; background: none; color: var(--accent); padding: 0; font-size: 12px; }
+.date-full { color: var(--muted); font-size: 12px; white-space: nowrap; text-align: right; }
+.crumb { margin-top: 10px; font-size: 11px; color: var(--muted); }
+.atts { flex: none; display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 22px; border-bottom: 1px solid var(--border); max-height: 140px; overflow-y: auto; }
+.att {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 280px; padding: 6px 10px;
+  border-radius: 8px; background: var(--chip); border: 1px solid var(--border); text-align: left;
+}
+.att:hover { border-color: var(--accent); }
+.att .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.att .sz { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.att.missing { opacity: .55; cursor: not-allowed; }
+.att .ext { font-size: 9px; font-weight: 700; color: #fff; background: var(--muted); border-radius: 4px; padding: 2px 4px; text-transform: uppercase; flex: none; }
+.banner { flex: none; display: flex; align-items: center; gap: 10px; padding: 7px 22px; font-size: 12px; background: var(--warn); color: var(--warn-text); }
+.banner .btn { font-size: 12px; padding: 2px 8px; background: transparent; border-color: currentColor; color: inherit; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.seg button { border: 0; background: var(--bg); padding: 4px 10px; font-size: 12px; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+#body { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
+.kv { padding: 8px 22px 30px; overflow-y: auto; flex: 1; }
+.kv table { border-collapse: collapse; width: 100%; }
+.kv td { padding: 7px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.kv td:first-child { color: var(--muted); width: 190px; padding-right: 16px; font-size: 12px; }
+.kv td:last-child { white-space: pre-wrap; word-break: break-word; }
+.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes sp { to { transform: rotate(360deg); } }
+
+@media (max-width: 1100px) { #listpane { width: 300px; } #q { width: 200px; } }
+@media (max-width: 860px) { #sidebar { width: 180px; } .search label { display: none; } }
+</style>
+</head>
+<body>
+
+<div id="welcome">
+  <div class="drop" id="dropzone">
+    <svg class="i logo" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></svg>
+    <h1>OLM Viewer</h1>
+    <p>Browse an Outlook for Mac archive (.olm), including mail, attachments, contacts and calendar.</p>
+    <button class="btn primary" id="pick">Choose .olm file…</button>
+    <p class="hint">or drag the file onto this window</p>
+    <div class="privacy">
+      <svg class="i" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      Everything runs locally in your browser. The file is never uploaded anywhere.
+    </div>
+    <div class="help">To create an .olm file in Outlook for Mac, choose File › Export…</div>
+    <div class="errorbox" id="welcome-error" hidden></div>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header id="toolbar">
+    <div id="fileinfo"><span id="fname"></span><span id="status"></span></div>
+    <div class="search">
+      <div class="box">
+        <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="Search subject, people, attachments" autocomplete="off" spellcheck="false">
+      </div>
+      <label title="Also search inside message text (slower)"><input type="checkbox" id="deep"> Search message text</label>
+    </div>
+    <button class="btn" id="open-another">
+      <svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      Open…
+    </button>
+    <div id="progress"><div></div></div>
+  </header>
+  <div id="panes">
+    <nav id="sidebar"></nav>
+    <section id="listpane">
+      <div id="listhead"><span id="listtitle"></span><button id="sort"></button></div>
+      <div id="listscroll" tabindex="0"><div id="spacer"></div></div>
+      <div id="listempty" hidden></div>
+    </section>
+    <section id="reader"><div class="empty">No message selected</div></section>
+  </div>
+</div>
+
+<input type="file" id="file" hidden>
+
+<script>
+'use strict';
+/* =====================================================================
+   OLM Viewer: a self-contained viewer for Outlook for Mac .olm archives.
+   An .olm file is a ZIP archive of XML files. This page reads it with a
+   small random-access ZIP reader (zip64 aware) so even multi-GB archives
+   open quickly: only the parts you look at are decompressed.
+   ===================================================================== */
+
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const utf8 = new TextDecoder('utf-8');
+const nf = new Intl.NumberFormat();
+const fmtN = n => nf.format(n);
+
+/* ---------------------------- ZIP reader ---------------------------- */
+const u64 = (dv, o) => dv.getUint32(o, true) + dv.getUint32(o + 4, true) * 4294967296;
+
+const HAS_NATIVE_INFLATE = (() => { try { new DecompressionStream('deflate-raw'); return true; } catch { return false; } })();
+async function inflateRaw(u8) {
+  const ds = new DecompressionStream('deflate-raw');
+  const res = new Response(new Blob([u8]).stream().pipeThrough(ds));
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+/* Synchronous raw-DEFLATE decoder (RFC 1951), table driven. Used for the many small
+   XML files in an archive, where the native stream API's per-call overhead dominates. */
+const inflateSync = (() => {
+  const LBASE = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+  const LEXT = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+  const DBASE = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+  const DEXT = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+  const CLORD = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+  function table(lens, n) {
+    let max = 0;
+    const cnt = new Uint16Array(16);
+    for (let i = 0; i < n; i++) { cnt[lens[i]]++; if (lens[i] > max) max = lens[i]; }
+    cnt[0] = 0;
+    const next = new Uint16Array(16);
+    for (let b = 1, code = 0; b <= max; b++) { code = (code + cnt[b - 1]) << 1; next[b] = code; }
+    const size = 1 << max, t = new Uint32Array(size || 1);
+    for (let s = 0; s < n; s++) {
+      const L = lens[s]; if (!L) continue;
+      const c = next[L]++;
+      let r = 0; for (let i = 0; i < L; i++) r |= ((c >> i) & 1) << (L - 1 - i);
+      for (let k = r; k < size; k += 1 << L) t[k] = (s << 4) | L;
+    }
+    return { t, max };
+  }
+  const fl = new Uint8Array(288).fill(8, 0, 144).fill(9, 144, 256).fill(7, 256, 280).fill(8, 280, 288);
+  const FIXED_L = table(fl, 288), FIXED_D = table(new Uint8Array(30).fill(5), 30);
+
+  return function inflateSync(src, sizeHint) {
+    let out = new Uint8Array(sizeHint || src.length * 4 + 1024), op = 0;
+    let pos = 0, bb = 0, bc = 0;
+    const need = n => { while (bc < n) { bb |= (pos < src.length ? src[pos] : 0) << bc; pos++; bc += 8; } };
+    const bits = n => { need(n); const v = bb & ((1 << n) - 1); bb >>>= n; bc -= n; return v; };
+    const grow = n => { if (op + n > out.length) { const o = new Uint8Array(Math.max(out.length * 2, op + n)); o.set(out); out = o; } };
+    const sym = h => {
+      need(h.max);
+      const e = h.t[bb & ((1 << h.max) - 1)], L = e & 15;
+      if (!L) throw new Error('invalid deflate code');
+      bb >>>= L; bc -= L; return e >> 4;
+    };
+    let final;
+    do {
+      if (pos > src.length + 4) throw new Error('truncated deflate data');
+      final = bits(1);
+      const type = bits(2);
+      if (type === 0) {
+        pos -= bc >> 3; bb = 0; bc = 0; // drop partial byte, rewind look-ahead bytes
+        const len = src[pos] | (src[pos + 1] << 8); pos += 4;
+        grow(len); out.set(src.subarray(pos, pos + len), op); op += len; pos += len;
+      } else if (type === 1 || type === 2) {
+        let lt = FIXED_L, dt = FIXED_D;
+        if (type === 2) {
+          const hlit = bits(5) + 257, hdist = bits(5) + 1, hclen = bits(4) + 4;
+          const cl = new Uint8Array(19);
+          for (let i = 0; i < hclen; i++) cl[CLORD[i]] = bits(3);
+          const ct = table(cl, 19);
+          const lens = new Uint8Array(hlit + hdist);
+          for (let i = 0; i < hlit + hdist;) {
+            const s = sym(ct);
+            if (s < 16) lens[i++] = s;
+            else {
+              let rep, val = 0;
+              if (s === 16) { if (!i) throw new Error('invalid deflate lengths'); val = lens[i - 1]; rep = 3 + bits(2); }
+              else if (s === 17) rep = 3 + bits(3);
+              else rep = 11 + bits(7);
+              while (rep--) lens[i++] = val;
+            }
+          }
+          lt = table(lens.subarray(0, hlit), hlit);
+          dt = table(lens.subarray(hlit), hdist);
+        }
+        for (;;) {
+          const s = sym(lt);
+          if (s < 256) { if (op >= out.length) grow(1); out[op++] = s; }
+          else if (s === 256) break;
+          else {
+            const li = s - 257;
+            if (li > 28) throw new Error('invalid deflate length');
+            const len = LBASE[li] + bits(LEXT[li]);
+            const ds = sym(dt);
+            if (ds > 29) throw new Error('invalid deflate distance');
+            const dist = DBASE[ds] + bits(DEXT[ds]);
+            let from = op - dist;
+            if (from < 0) throw new Error('invalid deflate distance');
+            grow(len);
+            for (let k = 0; k < len; k++) out[op++] = out[from++];
+          }
+        }
+      } else throw new Error('invalid deflate block');
+    } while (!final);
+    return out.subarray(0, op);
+  };
+})();
+
+class Zip {
+  constructor(file) { this.file = file; this.size = file.size; this.entries = []; }
+  async bytes(a, b) { return new Uint8Array(await this.file.slice(a, b).arrayBuffer()); }
+
+  async open() {
+    const size = this.size;
+    if (size < 22) throw new Error('This file is too small to be an .olm archive.');
+    const tailLen = Math.min(size, 65557 + 20);
+    const tail = await this.bytes(size - tailLen, size);
+    const dv = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+    let eocd = -1;
+    for (let i = tail.length - 22; i >= 0; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('This does not look like an .olm archive (no ZIP directory found). The file may be incomplete or damaged.');
+    let count = dv.getUint16(eocd + 10, true);
+    let cdSize = dv.getUint32(eocd + 12, true);
+    let cdOffset = dv.getUint32(eocd + 16, true);
+    if (count === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
+      const loc = eocd - 20;
+      if (loc >= 0 && dv.getUint32(loc, true) === 0x07064b50) {
+        const z64 = u64(dv, loc + 8);
+        const zb = await this.bytes(z64, z64 + 56);
+        const zdv = new DataView(zb.buffer, zb.byteOffset, zb.byteLength);
+        if (zdv.getUint32(0, true) !== 0x06064b50) throw new Error('Damaged zip64 directory.');
+        count = u64(zdv, 32); cdSize = u64(zdv, 40); cdOffset = u64(zdv, 48);
+      }
+    }
+    const cd = await this.bytes(cdOffset, cdOffset + cdSize);
+    const c = new DataView(cd.buffer, cd.byteOffset, cd.byteLength);
+    let p = 0;
+    while (p + 46 <= cd.length && c.getUint32(p, true) === 0x02014b50) {
+      const method = c.getUint16(p + 10, true);
+      let comp = c.getUint32(p + 20, true), uncomp = c.getUint32(p + 24, true);
+      const nameLen = c.getUint16(p + 28, true), extraLen = c.getUint16(p + 30, true), commentLen = c.getUint16(p + 32, true);
+      let offset = c.getUint32(p + 42, true);
+      const name = utf8.decode(cd.subarray(p + 46, p + 46 + nameLen));
+      let e = p + 46 + nameLen;
+      const eEnd = e + extraLen;
+      while (e + 4 <= eEnd) {
+        const id = c.getUint16(e, true), len = c.getUint16(e + 2, true);
+        if (id === 0x0001) {
+          let q = e + 4;
+          if (uncomp === 0xffffffff) { uncomp = u64(c, q); q += 8; }
+          if (comp === 0xffffffff) { comp = u64(c, q); q += 8; }
+          if (offset === 0xffffffff) { offset = u64(c, q); q += 8; }
+        }
+        e += 4 + len;
+      }
+      if (!name.endsWith('/')) this.entries.push({ name, method, comp, uncomp, offset, nameLen, extraLen });
+      p = eEnd + commentLen;
+    }
+    if (!this.entries.length) throw new Error('The archive is empty.');
+  }
+
+  /* chunk: optional {start, buf} already read from disk that may contain this entry */
+  async raw(e, chunk) {
+    const guess = 30 + e.nameLen + e.extraLen + 64;
+    let buf;
+    if (chunk && e.offset >= chunk.start && e.offset + guess + e.comp <= chunk.start + chunk.buf.length) {
+      buf = chunk.buf.subarray(e.offset - chunk.start);
+    } else {
+      buf = await this.bytes(e.offset, Math.min(this.size, e.offset + guess + e.comp));
+    }
+    let dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    if (buf.length < 30 || dv.getUint32(0, true) !== 0x04034b50) throw new Error('Damaged entry: ' + e.name);
+    const start = 30 + dv.getUint16(26, true) + dv.getUint16(28, true);
+    if (start + e.comp > buf.length) buf = await this.bytes(e.offset, e.offset + start + e.comp);
+    return buf.subarray(start, start + e.comp);
+  }
+  async data(e, chunk) {
+    const r = await this.raw(e, chunk);
+    if (e.method === 0) return r;
+    if (e.method === 8) {
+      if (!HAS_NATIVE_INFLATE) return inflateSync(r, e.uncomp);
+      if (e.uncomp <= 8 * 1048576) { try { return inflateSync(r, e.uncomp); } catch (err) { /* fall back to native */ } }
+      return inflateRaw(r);
+    }
+    throw new Error('Unsupported compression method ' + e.method);
+  }
+  async text(e, chunk) { return utf8.decode(await this.data(e, chunk)); }
+  /* Group entries (sorted by offset) into runs that can be read from disk in one go. */
+  batches(list, getEntry, maxBytes = 8 * 1048576, maxCount = 400) {
+    const out = []; let cur = null;
+    for (const item of list) {
+      const e = getEntry(item), end = e.offset + 30 + e.nameLen + e.extraLen + 64 + e.comp;
+      if (cur && end - cur.start <= maxBytes && cur.items.length < maxCount) { cur.items.push(item); cur.end = Math.max(cur.end, end); }
+      else { cur = { start: e.offset, end, items: [item] }; out.push(cur); }
+    }
+    for (const b of out) b.end = Math.min(this.size, b.end);
+    return out;
+  }
+  async readBatch(b) { return { start: b.start, buf: await this.bytes(b.start, b.end) }; }
+  async blob(e, type) { return new Blob([await this.data(e)], { type: type || 'application/octet-stream' }); }
+}
+
+/* ------------------------- XML helpers (fast) ------------------------- */
+const RX = Object.create(null);
+const tagRx = tag => RX[tag] || (RX[tag] = new RegExp('<' + tag + '(?:\\s[^>]*?)?(?:/>|>([\\s\\S]*?)</' + tag + '\\s*>)'));
+const NAMED = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'", nbsp: '\u00a0' };
+function decodeEnt(s) {
+  if (s.indexOf('&') < 0) return s;
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
+    if (e[0] === '#') {
+      const n = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      try { return String.fromCodePoint(n); } catch { return m; }
+    }
+    const v = NAMED[e.toLowerCase()];
+    return v === undefined ? m : v;
+  });
+}
+function decodeXml(s) {
+  if (s.indexOf('<![CDATA[') < 0) return decodeEnt(s);
+  return s.split(/(<!\[CDATA\[[\s\S]*?\]\]>)/).map(p => p.startsWith('<![CDATA[') ? p.slice(9, -3) : decodeEnt(p)).join('');
+}
+const getInner = (xml, tag) => { const m = tagRx(tag).exec(xml); return (m && m[1]) || ''; };
+const getText = (xml, tag) => { const s = getInner(xml, tag); return s ? decodeXml(s).trim() : ''; };
+function parseAttrs(s) {
+  const o = {}; const re = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g; let m;
+  while ((m = re.exec(s))) o[m[1]] = decodeEnt(m[2] ?? m[3]);
+  return o;
+}
+function getAddresses(xml, tag) {
+  const inner = getInner(xml, tag); if (!inner) return [];
+  const out = []; const re = /<[\w:.-]+\s([^>]*?)\/?>/g; let m;
+  while ((m = re.exec(inner))) {
+    const a = parseAttrs(m[1]); let email = '', name = '';
+    for (const k in a) {
+      if (/Address$/i.test(k)) email = a[k];
+      else if (/Name$/i.test(k)) name = a[k];
+    }
+    if (email || name) out.push({ name: name.trim(), email: email.trim() });
+  }
+  return out;
+}
+function stripHtml(html) {
+  return decodeEnt(html
+    .replace(/<(style|script|head)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(br|\/p|\/div|\/tr|\/li|\/h\d|\/table)\b[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' '));
+}
+function parseDate(s) {
+  if (!s) return 0;
+  let t = s.trim();
+  if (/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(t)) t += 'Z'; // OLM stores UTC without a zone
+  const v = Date.parse(t);
+  return isNaN(v) ? 0 : v;
+}
+const isTrue = v => v === '1' || /^true$/i.test(v);
+const isFalse = v => v === '0' || /^false$/i.test(v);
+
+function getAttachments(xml) {
+  const inner = getInner(xml, 'OPFMessageCopyAttachmentList'); if (!inner) return [];
+  const out = []; const re = /<messageAttachment\b([^>]*?)\/?>/g; let m;
+  while ((m = re.exec(inner))) {
+    const a = parseAttrs(m[1]);
+    out.push({
+      name: a.OPFAttachmentName || 'attachment' + (a.OPFAttachmentContentExtension ? '.' + a.OPFAttachmentContentExtension : ''),
+      type: a.OPFAttachmentContentType || 'application/octet-stream',
+      url: a.OPFAttachmentURL || '',
+      cid: a.OPFAttachmentContentID || '',
+      size: parseInt(a.OPFAttachmentContentFileSize, 10) || 0,
+    });
+  }
+  return out;
+}
+
+function extractMeta(xml) {
+  let from = getAddresses(xml, 'OPFMessageCopyFromAddresses');
+  if (!from.length) from = getAddresses(xml, 'OPFMessageCopySenderAddress');
+  let to = getAddresses(xml, 'OPFMessageCopyToAddresses');
+  if (!to.length) { const d = getText(xml, 'OPFMessageCopyDisplayTo'); if (d) to = [{ name: d, email: '' }]; }
+  const subject = getText(xml, 'OPFMessageCopySubject');
+  const date = parseDate(getText(xml, 'OPFMessageCopyReceivedTime')) || parseDate(getText(xml, 'OPFMessageCopySentTime'));
+  let preview = getText(xml, 'OPFMessageCopyPreview');
+  if (!preview) preview = getText(xml, 'OPFMessageCopyBody').slice(0, 2000);
+  if (!preview) preview = stripHtml(getText(xml, 'OPFMessageCopyHTMLBody').slice(0, 20000));
+  preview = preview.replace(/\s+/g, ' ').trim().slice(0, 220);
+  const atts = getAttachments(xml);
+  const hasAtt = isTrue(getText(xml, 'OPFMessageGetHasAttachment')) || atts.length > 0;
+  const unread = isFalse(getText(xml, 'OPFMessageGetIsRead'));
+  const people = [...from, ...to].map(a => a.name + ' ' + a.email).join(' ');
+  return {
+    subject, from, to, date, preview, hasAtt, unread,
+    s: (subject + ' ' + people + ' ' + preview + ' ' + atts.map(a => a.name).join(' ')).toLowerCase(),
+  };
+}
+
+function extractFull(xml) {
+  const m = extractMeta(xml);
+  m.cc = getAddresses(xml, 'OPFMessageCopyCCAddresses');
+  m.bcc = getAddresses(xml, 'OPFMessageCopyBCCAddresses');
+  m.replyTo = getAddresses(xml, 'OPFMessageCopyReplyToAddresses');
+  m.sent = parseDate(getText(xml, 'OPFMessageCopySentTime'));
+  m.received = parseDate(getText(xml, 'OPFMessageCopyReceivedTime'));
+  m.html = getText(xml, 'OPFMessageCopyHTMLBody');
+  m.text = getText(xml, 'OPFMessageCopyBody');
+  m.messageId = getText(xml, 'OPFMessageCopyMessageID');
+  m.atts = getAttachments(xml);
+  m.xml = xml;
+  return m;
+}
+
+/* ------------------------------ formatting ------------------------------ */
+function fmtListDate(ms) {
+  if (!ms) return '';
+  const d = new Date(ms), now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const days = (now - d) / 864e5;
+  if (days >= 0 && days < 6) return d.toLocaleDateString(undefined, { weekday: 'long' });
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+const fmtFull = ms => ms ? new Date(ms).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' }) : '';
+function fmtSize(b) {
+  if (!b) return '';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+const addrLabel = a => a.name || a.email || '(unknown)';
+const addrFull = a => a.name && a.email && a.name !== a.email ? `${a.name} <${a.email}>` : (a.email || a.name);
+function initials(a) {
+  const s = (a && (a.name || a.email)) || '?';
+  const parts = s.replace(/<.*?>|["']/g, '').split(/[\s@._-]+/).filter(Boolean);
+  return ((parts[0] || '?')[0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+function hue(str) { let h = 0; for (const ch of str || '') h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; }
+const safeName = s => (s || 'untitled').replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, '_').trim().slice(0, 120) || 'untitled';
+
+function download(blob, name) {
+  const u = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = u; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 60000);
+}
+
+/* -------------------------------- icons -------------------------------- */
+const ICONS = {
+  all: '<path d="M4 13l2.5-7h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h4.5l1 2h5l1-2H20"/>',
+  inbox: '<path d="M4 13l2.5-7h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h4.5l1 2h5l1-2H20"/>',
+  sent: '<path d="M21 3 10 14"/><path d="m21 3-7 18-4-7-7-4z"/>',
+  drafts: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  junk: '<circle cx="12" cy="12" r="8"/><path d="m6.5 6.5 11 11"/>',
+  archive: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8M10 12h4"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  contacts: '<circle cx="12" cy="8" r="4"/><path d="M4 20c1-4 4.5-6 8-6s7 2 8 6"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  tasks: '<path d="m4 7 2 2 4-4M4 16l2 2 4-4M13 7h7M13 16h7"/>',
+  notes: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
+  list: '<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>',
+  clip: '<path d="m20 11-8.5 8.5a5 5 0 0 1-7-7L13 4a3.3 3.3 0 0 1 4.7 4.7L9.2 17.2a1.7 1.7 0 0 1-2.4-2.4L14.5 7"/>',
+  download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  print: '<path d="M7 9V3h10v6M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="7"/>',
+  account: '<circle cx="12" cy="12" r="9"/><path d="M16 12a4 4 0 1 1-1.2-2.8M16 9v4.5a2 2 0 0 0 4 0V12"/>',
+};
+const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24">${ICONS[n] || ICONS.folder}</svg>`;
+function folderIcon(name) {
+  const n = name.toLowerCase();
+  if (/^inbox/.test(n)) return 'inbox';
+  if (/^sent|verzonden|gesendet|envoy/.test(n)) return 'sent';
+  if (/draft|concept|entw|brouillon/.test(n)) return 'drafts';
+  if (/deleted|trash|bin|verwijderd|gelöscht|corbeille/.test(n)) return 'trash';
+  if (/junk|spam|ongewenst/.test(n)) return 'junk';
+  if (/archive|archief|archiv/.test(n)) return 'archive';
+  return 'folder';
+}
+const FOLDER_ORDER = ['inbox', 'drafts', 'sent', 'archive', 'trash', 'junk'];
+
+/* ------------------------------ app state ------------------------------ */
+let S = null; // current archive session
+const V = { kind: 'all', key: null, q: '', terms: [], deep: false, asc: false, items: [], sel: null, deepGen: 0, deepHits: new Set(), deepStatus: '' };
+const ROW_H = 72;
+
+function accountOf(prefix) {
+  const segs = prefix.split('/').filter(Boolean);
+  if (segs[0] === 'Accounts' && segs[1]) return segs[1];
+  if (segs[0] === 'Local' || !segs.length) return 'On My Computer';
+  return segs.join('/');
+}
+
+function folderFor(account, path) {
+  const key = account + '\u0001' + path;
+  let f = S.folders.get(key);
+  if (!f) {
+    const i = path.lastIndexOf('/');
+    if (i > 0) folderFor(account, path.slice(0, i));
+    f = { key, account, path, name: path.slice(i + 1) || 'Mail', msgs: [], total: 0, unread: 0 };
+    S.folders.set(key, f);
+    if (!S.accounts.includes(account)) S.accounts.push(account);
+  }
+  return f;
+}
+
+/* --------------------------- opening a file --------------------------- */
+async function openFile(file) {
+  if (!file) return;
+  const sess = {
+    file, zip: new Zip(file), byName: new Map(), byBase: null, messages: [], folders: new Map(),
+    accounts: [], collections: [], total: 0, done: 0, failed: 0, indexing: true,
+  };
+  try {
+    await sess.zip.open();
+  } catch (err) {
+    showWelcomeError(err.message || String(err));
+    return;
+  }
+  S = sess;
+  Object.assign(V, { kind: 'all', key: null, items: [], sel: null, deepHits: new Set(), deepStatus: '' });
+  V.deepGen++;
+  $('#welcome').hidden = true; $('#app').hidden = false;
+  $('#fname').textContent = file.name;
+  document.title = file.name + ' · OLM Viewer';
+  $('#q').value = ''; V.q = ''; V.terms = [];
+  $('#listscroll').scrollTop = 0;
+  clearReader();
+
+  const MSG = /^(.*?)\/?com\.microsoft\.__Messages\/(?:(.*)\/)?([^/]+\.xml)$/i;
+  const msgList = [], otherXml = [];
+  for (const e of sess.zip.entries) {
+    sess.byName.set(e.name, e);
+    const m = MSG.exec(e.name);
+    if (m) {
+      const f = folderFor(accountOf(m[1]), m[2] || 'Mail');
+      f.total++; sess.total++;
+      msgList.push([e, f]);
+    } else if (/\.xml$/i.test(e.name) && !/com\.microsoft\.__Attachments\//i.test(e.name)) {
+      otherXml.push(e);
+    }
+  }
+  renderSidebar(); refreshList(); updateStatus();
+
+  await loadCollections(sess, otherXml);
+  if (S !== sess) return;
+  renderSidebar();
+
+  msgList.sort((a, b) => a[0].offset - b[0].offset); // read the file front to back, in large chunks
+  const batches = sess.zip.batches(msgList, x => x[0]);
+  let bi = 0;
+  const worker = async () => {
+    while (bi < batches.length && S === sess) {
+      const b = batches[bi++];
+      let chunk = null;
+      try { chunk = await sess.zip.readBatch(b); } catch (err) { console.warn('Chunk read failed', err); }
+      await Promise.all(b.items.map(async ([e, f]) => {
+        if (S !== sess) return;
+        try {
+          const m = extractMeta(await sess.zip.text(e, chunk));
+          m.e = e; m.f = f;
+          sess.messages.push(m); f.msgs.push(m);
+          if (m.unread) f.unread++;
+        } catch (err) {
+          sess.failed++; console.warn('Could not read', e.name, err);
+        }
+        sess.done++;
+      }));
+      scheduleRefresh();
+    }
+  };
+  await Promise.all(Array.from({ length: 3 }, worker));
+  if (S !== sess) return;
+  sess.indexing = false;
+  renderSidebar(); refreshList(); updateStatus();
+  if (V.deep && V.terms.length) runDeepSearch();
+}
+
+let refreshTimer = null, lastListRefresh = 0;
+function scheduleRefresh() {
+  if (refreshTimer) return;
+  refreshTimer = requestAnimationFrame(() => {
+    refreshTimer = null;
+    updateStatus();
+    const now = performance.now();
+    if (now - lastListRefresh > 900) { lastListRefresh = now; refreshList(); renderSidebar(); }
+  });
+}
+
+function updateStatus() {
+  if (!S) return;
+  const parts = [];
+  if (S.indexing) parts.push(`Reading messages… ${fmtN(S.done)} of ${fmtN(S.total)}`);
+  else parts.push(`${fmtN(S.messages.length)} messages`);
+  if (S.accounts.length > 1) parts.push(`${S.accounts.length} accounts`);
+  const items = S.collections.reduce((n, c) => n + c.items.length, 0);
+  if (items) parts.push(`${fmtN(items)} other items`);
+  if (S.failed) parts.push(`${fmtN(S.failed)} unreadable`);
+  if (V.deepStatus) parts.push(V.deepStatus);
+  $('#status').textContent = parts.join(' · ');
+  const pct = S.indexing && S.total ? (S.done / S.total) * 100 : 0;
+  $('#progress > div').style.width = pct + '%';
+  $('#progress').hidden = !S.indexing;
+}
+
+/* -------------------- contacts / calendar / tasks / notes -------------------- */
+const KINDS = {
+  contacts: ['Contacts', 'contacts'], appointments: ['Calendar', 'calendar'], calendar: ['Calendar', 'calendar'],
+  tasks: ['Tasks', 'tasks'], notes: ['Notes', 'notes'], categories: ['Categories', 'list'], signatures: ['Signatures', 'notes'],
+};
+function humanize(tag) {
+  let s = tag.replace(/^OPF[A-Za-z]*?(?:Copy|Get|Set)(?=[A-Z])/, '').replace(/^OPF/, '');
+  s = s.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+const looksDate = t => /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(t);
+function fieldValue(el, depth = 0) {
+  const kids = [...el.children];
+  if (!kids.length) {
+    const t = el.textContent.trim();
+    if (t) {
+      if (looksDate(t)) return fmtFull(parseDate(t));
+      if (/<\/?(html|body|div|p|br|span|table)\b/i.test(t)) return stripHtml(t).replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
+      return t;
+    }
+    return [...el.attributes].map(a => a.value).filter(Boolean).join(', ');
+  }
+  if (depth > 3) return '';
+  return kids.map(k => {
+    const at = {}; for (const a of k.attributes) at[a.localName] = a.value;
+    const ak = Object.keys(at).find(x => /Address$/i.test(x));
+    const nk = Object.keys(at).find(x => /Name$/i.test(x));
+    if (ak) return addrFull({ name: nk ? at[nk] : '', email: at[ak] });
+    return fieldValue(k, depth + 1);
+  }).filter(Boolean).join('\n');
+}
+
+async function loadCollections(sess, entries) {
+  for (const e of entries) {
+    if (S !== sess) return;
+    if (e.uncomp > 400 * 1048576) continue;
+    try {
+      let txt = await sess.zip.text(e);
+      txt = txt.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+      const doc = new DOMParser().parseFromString(txt, 'application/xml');
+      if (doc.getElementsByTagName('parsererror').length) continue;
+      const root = doc.documentElement;
+      const els = [...root.children];
+      if (!els.length) continue;
+      const rk = root.localName.toLowerCase();
+      const [label, ic] = KINDS[rk] || [humanize(root.localName), 'list'];
+      const prefix = e.name.split('/').slice(0, 2).join('/');
+      const account = accountOf(prefix);
+      const items = els.map(el => {
+        const kids = [...el.children];
+        const get = re => { const k = kids.find(k => re.test(k.localName) && k.textContent.trim()); return k ? k.textContent.trim() : ''; };
+        const fields = [];
+        for (const k of kids) {
+          let v = fieldValue(k);
+          const label = humanize(k.localName);
+          if (/^(Is|Has|Get)\b/.test(label) && /^[01]$/.test(v)) v = v === '1' ? 'Yes' : 'No';
+          if (v) fields.push([label, v]);
+        }
+        let title = get(/DisplayName$/) || [get(/FirstName$/), get(/LastName$/)].filter(Boolean).join(' ')
+          || get(/(Summary|Subject|Title)$/) || get(/Name$/);
+        if (!title) { const a = [...el.querySelectorAll('*')].find(x => [...x.attributes].some(a => /Address$/.test(a.localName))); if (a) title = [...a.attributes].find(a => /Address$/.test(a.localName)).value; }
+        if (!title) title = fields.length ? fields[0][1].split('\n')[0] : '(untitled)';
+        const dateRaw = get(/(StartTime|StartDate|DueDate|ModDate|ModifiedDate|CreationDate|CreatedDate)$/);
+        const date = parseDate(dateRaw);
+        let sub = '';
+        if (ic === 'contacts') {
+          const em = [...el.querySelectorAll('*')].map(x => [...x.attributes].find(a => /Address$/.test(a.localName))).find(Boolean);
+          sub = [get(/Company$|CompanyName$/), em ? em.value : ''].filter(Boolean).join(' · ');
+        } else if (ic === 'calendar') {
+          sub = [date ? fmtFull(date) : '', get(/Location$/)].filter(Boolean).join(' · ');
+        } else if (date) sub = fmtFull(date);
+        const detail = ic === 'contacts' ? [get(/Title$|JobTitle$/), get(/Phone$/)].filter(Boolean).join(' · ') : (get(/Description(Plain)?$|Body$|Content$/) || '').slice(0, 200);
+        const s = fields.map(f => f[1]).join(' ').toLowerCase();
+        return { coll: true, title, sub, detail: detail.replace(/\s+/g, ' '), date, fields, s };
+      });
+      if (ic === 'contacts') items.sort((a, b) => a.title.localeCompare(b.title));
+      else if (items.some(x => x.date)) items.sort((a, b) => b.date - a.date);
+      sess.collections.push({ label, icon: ic, account, items, entry: e });
+    } catch (err) {
+      console.warn('Could not read', e.name, err);
+    }
+  }
+  const multi = new Set(sess.collections.map(c => c.account)).size > 1;
+  for (const c of sess.collections) c.title = multi ? `${c.label} · ${c.account}` : c.label;
+}
+
+/* ------------------------------ sidebar ------------------------------ */
+function renderSidebar() {
+  if (!S) return;
+  const nav = $('#sidebar');
+  const st = nav.scrollTop;
+  const isActive = (k, key) => V.kind === k && (k === 'all' || V.key === key) ? ' active' : '';
+  let h = `<div class="nav-item${isActive('all')}" data-kind="all">${icon('all')}<span class="name">All Messages</span><span class="count">${fmtN(S.total)}</span></div>`;
+  for (const acc of S.accounts) {
+    const fs = [...S.folders.values()].filter(f => f.account === acc);
+    const kids = new Map();
+    for (const f of fs) {
+      const i = f.path.lastIndexOf('/');
+      const parent = i > 0 ? f.path.slice(0, i) : '';
+      if (!kids.has(parent)) kids.set(parent, []);
+      kids.get(parent).push(f);
+    }
+    const rank = f => { const r = FOLDER_ORDER.indexOf(folderIcon(f.name)); return r < 0 ? 99 : r; };
+    const walk = (parent, depth) => {
+      const list = (kids.get(parent) || []).sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+      for (const f of list) {
+        const cnt = !S.indexing && f.unread ? `<span class="count unread" title="${fmtN(f.unread)} unread of ${fmtN(f.total)}">${fmtN(f.unread)}</span>` : `<span class="count">${f.total ? fmtN(f.total) : ''}</span>`;
+        h += `<div class="nav-item${isActive('folder', f.key)}" data-kind="folder" data-key="${esc(f.key)}" style="padding-left:${8 + depth * 14}px" title="${esc(f.path)}">${icon(folderIcon(f.name))}<span class="name">${esc(f.name)}</span>${cnt}</div>`;
+        walk(f.path, depth + 1);
+      }
+    };
+    h += `<div class="nav-section" title="${esc(acc)}">${esc(acc)}</div>`;
+    walk('', 0);
+  }
+  if (S.collections.length) {
+    h += `<div class="nav-section">Other items</div>`;
+    S.collections.forEach((c, i) => {
+      h += `<div class="nav-item${isActive('coll', i)}" data-kind="coll" data-key="${i}">${icon(c.icon)}<span class="name">${esc(c.title)}</span><span class="count">${fmtN(c.items.length)}</span></div>`;
+    });
+  }
+  nav.innerHTML = h;
+  nav.scrollTop = st;
+}
+$('#sidebar').addEventListener('click', e => {
+  const it = e.target.closest('.nav-item'); if (!it) return;
+  const kind = it.dataset.kind;
+  const key = kind === 'coll' ? +it.dataset.key : (it.dataset.key ?? null);
+  if (V.kind === kind && V.key === key) return;
+  V.kind = kind; V.key = key; V.sel = null;
+  $('#listscroll').scrollTop = 0;
+  clearReader(); renderSidebar(); refreshList(); runDeepSearch();
+});
+
+/* ------------------------------ message list ------------------------------ */
+function baseItems() {
+  if (!S) return [];
+  if (V.kind === 'all') return S.messages;
+  if (V.kind === 'folder') return (S.folders.get(V.key) || {}).msgs || [];
+  return (S.collections[V.key] || {}).items || [];
+}
+function viewTitle() {
+  if (V.kind === 'all') return 'All Messages';
+  if (V.kind === 'folder') { const f = S.folders.get(V.key); return f ? f.name : ''; }
+  const c = S.collections[V.key]; return c ? c.title : '';
+}
+function computeItems() {
+  const base = baseItems();
+  const t = V.terms;
+  let items = t.length ? base.filter(m => t.every(w => m.s.includes(w)) || V.deepHits.has(m)) : base.slice();
+  if (V.kind !== 'coll') items.sort(V.asc ? (a, b) => a.date - b.date : (a, b) => b.date - a.date);
+  V.items = items;
+}
+function refreshList() {
+  if (!S) return;
+  computeItems();
+  const isColl = V.kind === 'coll';
+  $('#listtitle').innerHTML = `${esc(viewTitle())}<small>${fmtN(V.items.length)}${V.terms.length ? ' found' : ''}</small>`;
+  $('#sort').hidden = isColl;
+  $('#sort').textContent = V.asc ? 'Oldest first ↑' : 'Newest first ↓';
+  $('#spacer').style.height = V.items.length * ROW_H + 'px';
+  const empty = $('#listempty');
+  if (!V.items.length) {
+    empty.hidden = false;
+    empty.textContent = V.terms.length ? 'No matches.' + (V.deep ? '' : ' Try turning on "Search message text".')
+      : (S.indexing && !isColl ? 'Reading messages…' : 'This folder is empty.');
+  } else empty.hidden = true;
+  renderRows();
+}
+function renderRows() {
+  const sc = $('#listscroll');
+  const top = sc.scrollTop, h = sc.clientHeight || 800;
+  const start = Math.max(0, Math.floor(top / ROW_H) - 4);
+  const end = Math.min(V.items.length, Math.ceil((top + h) / ROW_H) + 4);
+  let out = '';
+  for (let i = start; i < end; i++) {
+    const m = V.items[i];
+    const sel = m === V.sel ? ' sel' : '';
+    if (m.coll) {
+      out += `<div class="row${sel}" data-i="${i}" style="top:${i * ROW_H}px"><div class="l1"><span class="who">${esc(m.title)}</span></div><div class="subj" style="color:var(--muted)">${esc(m.sub) || '&nbsp;'}</div><div class="prev">${esc(m.detail) || '&nbsp;'}</div></div>`;
+    } else {
+      const sentView = V.kind === 'folder' && /sent|draft|outbox/.test(folderIcon((S.folders.get(V.key) || {}).name || '') + ' ' + ((S.folders.get(V.key) || {}).name || '').toLowerCase());
+      const who = sentView && m.to.length ? 'To: ' + m.to.map(addrLabel).join(', ') : (m.from.length ? addrLabel(m.from[0]) : '(no sender)');
+      out += `<div class="row${sel}${m.unread ? ' unread' : ''}" data-i="${i}" style="top:${i * ROW_H}px">
+        <div class="l1"><span class="who">${esc(who)}</span><span class="when">${m.hasAtt ? icon('clip') : ''}${esc(fmtListDate(m.date))}</span></div>
+        <div class="subj">${esc(m.subject) || '<span style="color:var(--muted)">(no subject)</span>'}</div>
+        <div class="prev">${esc(m.preview) || '&nbsp;'}</div></div>`;
+    }
+  }
+  $('#spacer').innerHTML = out;
+}
+$('#listscroll').addEventListener('scroll', () => requestAnimationFrame(renderRows));
+window.addEventListener('resize', () => requestAnimationFrame(renderRows));
+$('#spacer').addEventListener('click', e => {
+  const r = e.target.closest('.row'); if (!r) return;
+  select(V.items[+r.dataset.i]);
+});
+$('#sort').addEventListener('click', () => { V.asc = !V.asc; refreshList(); });
+
+function select(item, scroll) {
+  if (!item) return;
+  V.sel = item;
+  if (scroll) {
+    const i = V.items.indexOf(item), sc = $('#listscroll');
+    const y = i * ROW_H;
+    if (y < sc.scrollTop) sc.scrollTop = y;
+    else if (y + ROW_H > sc.scrollTop + sc.clientHeight) sc.scrollTop = y + ROW_H - sc.clientHeight;
+  }
+  renderRows();
+  if (item.coll) showItem(item); else showMessage(item);
+}
+
+document.addEventListener('keydown', e => {
+  if ($('#app').hidden) return;
+  const inInput = e.target.matches('input, textarea');
+  if (e.key === '/' && !inInput) { e.preventDefault(); $('#q').focus(); return; }
+  if (e.key === 'Escape' && e.target === $('#q')) { $('#q').value = ''; onSearch(); $('#q').blur(); return; }
+  if (inInput || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (['ArrowDown', 'ArrowUp', 'j', 'k'].includes(e.key)) {
+    e.preventDefault();
+    const i = V.items.indexOf(V.sel);
+    const n = e.key === 'ArrowDown' || e.key === 'j' ? Math.min(V.items.length - 1, i + 1) : Math.max(0, i - 1);
+    select(V.items[n], true);
+  }
+});
+
+/* -------------------------------- search -------------------------------- */
+let searchTimer = null;
+function onSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    V.q = $('#q').value.trim();
+    V.terms = V.q.toLowerCase().split(/\s+/).filter(Boolean);
+    V.deepHits = new Set();
+    $('#listscroll').scrollTop = 0;
+    refreshList(); runDeepSearch();
+  }, 160);
+}
+$('#q').addEventListener('input', onSearch);
+$('#deep').addEventListener('change', e => { V.deep = e.target.checked; V.deepHits = new Set(); refreshList(); runDeepSearch(); });
+
+async function runDeepSearch() {
+  const gen = ++V.deepGen;
+  V.deepStatus = ''; updateStatus();
+  if (!S || !V.deep || !V.terms.length || V.kind === 'coll') return;
+  const terms = V.terms, sess = S;
+  const cand = baseItems().filter(m => !terms.every(w => m.s.includes(w))).sort((a, b) => a.e.offset - b.e.offset);
+  const batches = sess.zip.batches(cand, m => m.e);
+  let bi = 0, done = 0, last = 0;
+  const worker = async () => {
+    while (bi < batches.length && gen === V.deepGen && S === sess) {
+      const b = batches[bi++];
+      let chunk = null;
+      try { chunk = await sess.zip.readBatch(b); } catch { }
+      await Promise.all(b.items.map(async m => {
+        if (gen !== V.deepGen) return;
+        try {
+          const xml = await sess.zip.text(m.e, chunk);
+          const hay = m.s + ' ' + (getText(xml, 'OPFMessageCopyBody') + ' ' + stripHtml(getText(xml, 'OPFMessageCopyHTMLBody'))).toLowerCase();
+          if (terms.every(w => hay.includes(w))) V.deepHits.add(m);
+        } catch { }
+        done++;
+      }));
+      const now = performance.now();
+      if (now - last > 400 && gen === V.deepGen) {
+        last = now;
+        V.deepStatus = `Searching message text… ${Math.round(done / cand.length * 100)}%`;
+        updateStatus(); refreshList();
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: 3 }, worker));
+  if (gen !== V.deepGen) return;
+  V.deepStatus = ''; updateStatus(); refreshList();
+}
+
+/* -------------------------------- reader -------------------------------- */
+let readerToken = 0, blobUrls = [], current = null;
+function revokeAll() { blobUrls.forEach(u => URL.revokeObjectURL(u)); blobUrls = []; }
+function clearReader() {
+  readerToken++; revokeAll(); current = null;
+  $('#reader').innerHTML = '<div class="empty">No message selected</div>';
+}
+
+function findEntry(url) {
+  if (!url || !S) return null;
+  const u = url.replace(/^file:\/\//i, '').replace(/^\/+/, '');
+  const tries = [u];
+  try { const d = decodeURIComponent(u); if (d !== u) tries.push(d); } catch { }
+  for (const t of tries) { const e = S.byName.get(t); if (e) return e; }
+  if (!S.byBase) {
+    S.byBase = new Map();
+    for (const e of S.zip.entries) {
+      const b = e.name.slice(e.name.lastIndexOf('/') + 1);
+      if (!S.byBase.has(b)) S.byBase.set(b, []);
+      S.byBase.get(b).push(e);
+    }
+  }
+  for (const t of tries) {
+    const list = S.byBase.get(t.slice(t.lastIndexOf('/') + 1));
+    if (!list) continue;
+    const hit = list.find(e => e.name.endsWith('/' + t) || t.endsWith('/' + e.name) || t.endsWith(e.name));
+    if (hit) return hit;
+    if (list.length === 1) return list[0];
+  }
+  return null;
+}
+const normCid = c => { let s = (c || '').trim().replace(/^cid:/i, '').replace(/^<|>$/g, ''); try { s = decodeURIComponent(s); } catch { } return s.toLowerCase(); };
+
+async function showMessage(m) {
+  const tok = ++readerToken;
+  $('#reader').innerHTML = '<div class="empty"><span class="spin"></span>Loading…</div>';
+  let msg;
+  try { msg = extractFull(await S.zip.text(m.e)); }
+  catch (err) { if (tok === readerToken) $('#reader').innerHTML = `<div class="empty">Could not read this message.<br><small>${esc(err.message)}</small></div>`; return; }
+  if (tok !== readerToken) return;
+  revokeAll();
+  msg.meta = m;
+  for (const a of msg.atts) a.entry = findEntry(a.url);
+  msg.cidMap = new Map();
+  if (msg.html && /cid:/i.test(msg.html)) {
+    for (const a of msg.atts) {
+      if (!a.cid || !a.entry) continue;
+      try {
+        const u = URL.createObjectURL(await S.zip.blob(a.entry, a.type));
+        blobUrls.push(u); msg.cidMap.set(normCid(a.cid), u);
+      } catch { }
+    }
+    if (tok !== readerToken) return;
+  }
+  current = { msg, mode: msg.html ? 'html' : 'text', remote: false };
+  renderMessage();
+}
+
+function addrList(label, list, limit = 8) {
+  if (!list.length) return '';
+  const shown = list.slice(0, limit).map(a => `<span title="${esc(a.email)}">${esc(addrLabel(a))}</span>`).join(', ');
+  const more = list.length > limit ? ` <button class="more" data-more="${label}">and ${list.length - limit} more</button>` : '';
+  return `<div class="rcpt"><b>${label}:</b> ${shown}${more}</div>`;
+}
+
+function renderMessage() {
+  const { msg } = current;
+  const m = msg.meta;
+  const from = msg.from[0] || { name: '', email: '' };
+  const hasRemote = !!msg.html && /\b(?:src|background|srcset)\s*=\s*["']?\s*(?:https?:)?\/\/|url\(\s*["']?\s*(?:https?:)?\/\//i.test(msg.html);
+  const modes = [];
+  if (msg.html) modes.push(['html', 'Formatted']);
+  if (msg.text) modes.push(['text', 'Plain text']);
+  modes.push(['xml', 'Source']);
+  const f = m.f;
+  const atts = msg.atts.map((a, i) => {
+    const ext = (a.name.match(/\.([a-z0-9]{1,5})$/i) || [, ''])[1];
+    return `<button class="att${a.entry ? '' : ' missing'}" data-att="${i}" title="${a.entry ? 'Save ' + esc(a.name) : 'This attachment is not included in the archive'}">
+      ${ext ? `<span class="ext" style="background:hsl(${hue(ext.toLowerCase())} 45% 48%)">${esc(ext)}</span>` : icon('clip')}
+      <span class="nm">${esc(a.name)}</span><span class="sz">${esc(fmtSize(a.size || (a.entry && a.entry.uncomp)))}</span></button>`;
+  }).join('');
+
+  $('#reader').innerHTML = `
+    <div class="msg-head">
+      <div class="msg-actions">
+        ${modes.length > 1 ? `<div class="seg">${modes.map(([k, l]) => `<button data-mode="${k}" class="${current.mode === k ? 'on' : ''}">${l}</button>`).join('')}</div>` : ''}
+        <button class="btn" id="act-eml" title="Save as .eml, which opens in Apple Mail and most email apps">${icon('download')}Save as .eml</button>
+        <button class="btn" id="act-print">${icon('print')}Print</button>
+      </div>
+      <h1 class="subject">${esc(msg.subject) || '<span style="color:var(--muted)">(no subject)</span>'}</h1>
+      <div class="who-block">
+        <div class="avatar" style="background:hsl(${hue(from.email || from.name)} 45% 52%)">${esc(initials(from))}</div>
+        <div class="who-text">
+          <div class="from">${esc(from.name || from.email || '(unknown sender)')} ${from.name && from.email ? `<span class="addr">&lt;${esc(from.email)}&gt;</span>` : ''}</div>
+          ${addrList('To', msg.to)}${addrList('Cc', msg.cc)}${addrList('Bcc', msg.bcc)}
+          ${msg.replyTo.length && msg.replyTo[0].email !== from.email ? addrList('Reply-To', msg.replyTo) : ''}
+        </div>
+        <div class="date-full">${esc(fmtFull(msg.sent || msg.date))}</div>
+      </div>
+      <div class="crumb">${esc(f.account)} › ${esc(f.path.replace(/\//g, ' › '))}</div>
+    </div>
+    ${atts ? `<div class="atts">${atts}</div>` : ''}
+    ${hasRemote && current.mode === 'html' && !current.remote ? `<div class="banner">Remote images are blocked to protect your privacy. <button class="btn" id="act-remote">Load images</button></div>` : ''}
+    <iframe id="body" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-modals" title="Message body"></iframe>`;
+  $('#body').srcdoc = buildDoc();
+}
+
+$('#reader').addEventListener('click', async e => {
+  const t = e.target.closest('button'); if (!t || !current) return;
+  if (t.dataset.mode) { current.mode = t.dataset.mode; renderMessage(); }
+  else if (t.id === 'act-remote') { current.remote = true; renderMessage(); }
+  else if (t.id === 'act-print') { try { $('#body').contentWindow.focus(); $('#body').contentWindow.print(); } catch { window.print(); } }
+  else if (t.id === 'act-eml') { t.disabled = true; try { await exportEml(current.msg); } finally { t.disabled = false; } }
+  else if (t.dataset.more) {
+    const key = { To: 'to', Cc: 'cc', Bcc: 'bcc', 'Reply-To': 'replyTo' }[t.dataset.more];
+    t.parentElement.outerHTML = addrList(t.dataset.more, current.msg[key], 1e9);
+  }
+  else if (t.dataset.att) {
+    const a = current.msg.atts[+t.dataset.att];
+    if (!a.entry) return;
+    t.disabled = true;
+    try { download(await S.zip.blob(a.entry, a.type), safeName(a.name)); }
+    catch (err) { alert('Could not extract this attachment: ' + err.message); }
+    finally { t.disabled = false; }
+  }
+});
+
+function autolink(text) {
+  return esc(text).replace(/\b(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/g, '<a href="$1">$1</a>');
+}
+
+function buildDoc() {
+  const { msg, mode, remote } = current;
+  const csp = remote
+    ? "default-src 'none'; img-src * data: blob:; style-src * 'unsafe-inline'; font-src * data:; media-src * data: blob:"
+    : "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:";
+  const from = msg.from[0] || {};
+  const printHead = `<div id="olmv-print"><h2 style="margin:0 0 8px;font-size:18px">${esc(msg.subject)}</h2>
+    <div><b>From:</b> ${esc(addrFull(from))}</div>
+    ${msg.to.length ? `<div><b>To:</b> ${esc(msg.to.map(addrFull).join(', '))}</div>` : ''}
+    ${msg.cc.length ? `<div><b>Cc:</b> ${esc(msg.cc.map(addrFull).join(', '))}</div>` : ''}
+    <div><b>Date:</b> ${esc(fmtFull(msg.sent || msg.date))}</div>
+    ${msg.atts.length ? `<div><b>Attachments:</b> ${esc(msg.atts.map(a => a.name).join(', '))}</div>` : ''}<hr></div>`;
+  const baseCss = `<meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank">
+    <style>html{background:#fff}body{margin:18px 22px;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;color:#1d1d1f;word-wrap:break-word;overflow-wrap:anywhere}
+    img{max-width:100%}pre.olmv{white-space:pre-wrap;font:13px/1.55 ui-monospace,Menlo,monospace;margin:0}
+    #olmv-print{display:none;font:12px/1.5 -apple-system,Arial,sans-serif;color:#000}
+    @media print{#olmv-print{display:block}body{margin:0}}</style>`;
+  if (mode === 'xml') {
+    return `<!doctype html><html><head><meta charset="utf-8">${baseCss}</head><body><pre class="olmv">${esc(msg.xml)}</pre></body></html>`;
+  }
+  if (mode === 'text' || !msg.html) {
+    const body = msg.text || stripHtml(msg.html || '').trim() || '(This message has no text.)';
+    return `<!doctype html><html><head><meta charset="utf-8">${baseCss}</head><body>${printHead}<pre class="olmv" style="font:14px/1.55 -apple-system,BlinkMacSystemFont,Arial,sans-serif">${autolink(body)}</pre></body></html>`;
+  }
+  const doc = new DOMParser().parseFromString(msg.html, 'text/html');
+  doc.querySelectorAll('script, noscript, base, meta[http-equiv], iframe, frame, frameset, object, embed, applet, link[rel="import"]').forEach(n => n.remove());
+  if (msg.cidMap.size) {
+    doc.querySelectorAll('[src], [background]').forEach(el => {
+      for (const attr of ['src', 'background']) {
+        const v = el.getAttribute(attr);
+        if (v && /^cid:/i.test(v)) { const u = msg.cidMap.get(normCid(v)); if (u) el.setAttribute(attr, u); }
+      }
+    });
+  }
+  const meta = doc.createElement('meta'); meta.setAttribute('charset', 'utf-8');
+  doc.head.insertAdjacentHTML('afterbegin', baseCss);
+  doc.head.prepend(meta);
+  doc.body.insertAdjacentHTML('afterbegin', printHead);
+  return '<!doctype html>' + doc.documentElement.outerHTML;
+}
+
+function showItem(item) {
+  readerToken++; revokeAll(); current = null;
+  const rows = item.fields.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${autolink(v)}</td></tr>`).join('');
+  $('#reader').innerHTML = `<div class="msg-head"><h1 class="subject">${esc(item.title)}</h1>${item.sub ? `<div class="crumb" style="margin-top:0;font-size:13px">${esc(item.sub)}</div>` : ''}</div>
+    <div class="kv"><table>${rows || '<tr><td colspan="2">No details.</td></tr>'}</table></div>`;
+  $('#reader').querySelectorAll('a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+}
+
+/* ------------------------------ .eml export ------------------------------ */
+function b64(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s).replace(/.{76}(?=.)/g, '$&\r\n');
+}
+const enc = new TextEncoder();
+function encWord(s) {
+  if (!/[^\x20-\x7e]/.test(s)) return s;
+  const words = []; let cur = '';
+  for (const ch of s) {
+    if (enc.encode(cur + ch).length > 45) { words.push(cur); cur = ''; }
+    cur += ch;
+  }
+  if (cur) words.push(cur);
+  return words.map(w => '=?UTF-8?B?' + btoa(String.fromCharCode(...enc.encode(w))) + '?=').join('\r\n ');
+}
+function encAddr(a) {
+  if (!a.email) return encWord(a.name || '');
+  if (!a.name || a.name === a.email) return a.email;
+  const n = /[^\x20-\x7e]/.test(a.name) ? encWord(a.name) : '"' + a.name.replace(/(["\\])/g, '\\$1') + '"';
+  return `${n} <${a.email}>`;
+}
+async function exportEml(msg) {
+  const B = '----=_olmv_' + Math.random().toString(36).slice(2);
+  const B2 = B + '_alt';
+  const L = [];
+  const date = msg.sent || msg.date;
+  if (msg.from.length) L.push('From: ' + msg.from.map(encAddr).join(', '));
+  if (msg.to.length) L.push('To: ' + msg.to.map(encAddr).join(',\r\n '));
+  if (msg.cc.length) L.push('Cc: ' + msg.cc.map(encAddr).join(',\r\n '));
+  if (msg.bcc.length) L.push('Bcc: ' + msg.bcc.map(encAddr).join(',\r\n '));
+  if (msg.replyTo.length) L.push('Reply-To: ' + msg.replyTo.map(encAddr).join(', '));
+  L.push('Subject: ' + encWord(msg.subject || ''));
+  if (date) L.push('Date: ' + new Date(date).toUTCString().replace('GMT', '+0000'));
+  if (msg.messageId) L.push('Message-ID: ' + (msg.messageId.startsWith('<') ? msg.messageId : `<${msg.messageId}>`));
+  L.push('MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${B}"`, '', 'This is a multi-part message in MIME format.', '');
+  L.push('--' + B, `Content-Type: multipart/alternative; boundary="${B2}"`, '');
+  const text = msg.text || stripHtml(msg.html || '').trim();
+  L.push('--' + B2, 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: base64', '', b64(enc.encode(text)));
+  if (msg.html) L.push('--' + B2, 'Content-Type: text/html; charset=utf-8', 'Content-Transfer-Encoding: base64', '', b64(enc.encode(msg.html)));
+  L.push('--' + B2 + '--', '');
+  for (const a of msg.atts) {
+    if (!a.entry) continue;
+    const data = await S.zip.data(a.entry);
+    const fn = encodeURIComponent(a.name).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+    L.push('--' + B, `Content-Type: ${a.type}; name="${encWord(a.name).replace(/"/g, '')}"`,
+      `Content-Disposition: ${a.cid && msg.html && msg.html.toLowerCase().includes('cid:' + normCid(a.cid)) ? 'inline' : 'attachment'}; filename*=UTF-8''${fn}`,
+      'Content-Transfer-Encoding: base64');
+    if (a.cid) L.push('Content-ID: <' + a.cid.replace(/^<|>$/g, '') + '>');
+    L.push('', b64(data));
+  }
+  L.push('--' + B + '--', '');
+  download(new Blob([L.join('\r\n')], { type: 'message/rfc822' }), safeName(msg.subject || 'message') + '.eml');
+}
+
+/* --------------------------- file picking / drop --------------------------- */
+function showWelcomeError(msg) {
+  $('#app').hidden = true; $('#welcome').hidden = false;
+  const b = $('#welcome-error'); b.textContent = msg; b.hidden = false;
+}
+$('#pick').addEventListener('click', () => $('#file').click());
+$('#open-another').addEventListener('click', () => $('#file').click());
+$('#file').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) openFile(f); });
+let dragDepth = 0;
+window.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; $('#dropzone').classList.add('over'); });
+window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#dropzone').classList.remove('over'); } });
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => {
+  e.preventDefault(); dragDepth = 0; $('#dropzone').classList.remove('over');
+  const f = e.dataTransfer.files[0]; if (f) openFile(f);
+});
+</script>
+</body>
+</html>
