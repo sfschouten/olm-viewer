@@ -46,6 +46,11 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 9px 20px; font-size: 14px; font-weight: 500; border-radius: 9px; }
 .btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
 .drop .hint { margin-top: 12px; font-size: 13px; }
+.pick-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.btn.primary.alt { background: var(--bg); color: var(--accent); border-color: var(--accent); }
+.btn.primary.alt:hover { background: var(--accent-soft); }
+.backbar { flex: none; padding: 8px 22px 0; }
+.backbar .btn { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .drop .privacy { margin-top: 26px; font-size: 12px; color: var(--muted); display: flex; gap: 8px; justify-content: center; align-items: center; }
 .drop .help { margin-top: 18px; font-size: 12px; color: var(--faint); }
 .errorbox { margin-top: 18px; padding: 10px 12px; border-radius: 8px; background: var(--warn); color: var(--warn-text); font-size: 13px; text-align: left; }
@@ -160,14 +165,14 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
   <div class="drop" id="dropzone">
     <svg class="i logo" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></svg>
     <h1>OLM Viewer</h1>
-    <p>Browse an Outlook for Mac archive (.olm), including mail, attachments, contacts and calendar.</p>
-    <button class="btn primary" id="pick">Choose .olm file…</button>
-    <p class="hint">or drag the file onto this window</p>
+    <p>Browse Outlook for Mac archives (.olm), email files (.eml) and mailboxes (.mbox), including attachments, contacts and calendar.</p>
+    <div class="pick-row"><button class="btn primary" id="pick">Choose files…</button><button class="btn primary alt" id="pick-dir">Choose folder…</button></div>
+    <p class="hint">or drag files or folders onto this window</p>
     <div class="privacy">
       <svg class="i" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       Everything runs locally in your browser. The file is never uploaded anywhere.
     </div>
-    <div class="help">To create an .olm file in Outlook for Mac, choose File › Export…</div>
+    <div class="help">Outlook for Mac: File › Export… makes an .olm file. Apple Mail: Mailbox › Export Mailbox… makes an .mbox folder. Gmail: Google Takeout exports .mbox.</div>
     <div class="errorbox" id="welcome-error" hidden></div>
   </div>
 </div>
@@ -182,9 +187,13 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
       </div>
       <label title="Also search inside message text (slower)"><input type="checkbox" id="deep"> Search message text</label>
     </div>
-    <button class="btn" id="open-another">
-      <svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    <button class="btn" id="open-another" title="Open .olm, .eml or .mbox files">
+      <svg class="i" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/></svg>
       Open…
+    </button>
+    <button class="btn" id="open-dir" title="Open a folder of email files or mailboxes">
+      <svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      Folder…
     </button>
     <div id="progress"><div></div></div>
   </header>
@@ -199,21 +208,26 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
   </div>
 </div>
 
-<input type="file" id="file" hidden>
+<input type="file" id="file" multiple hidden>
+<input type="file" id="dir" webkitdirectory multiple hidden>
 
 <script>
 'use strict';
 /* =====================================================================
-   OLM Viewer: a self-contained viewer for Outlook for Mac .olm archives.
-   An .olm file is a ZIP archive of XML files. This page reads it with a
-   small random-access ZIP reader (zip64 aware) so even multi-GB archives
-   open quickly: only the parts you look at are decompressed.
+   OLM Viewer: a self-contained viewer for Outlook for Mac .olm archives,
+   .eml / .emlx email files and .mbox mailboxes.
+   An .olm file is a ZIP archive of XML files, read with a small random-access
+   ZIP reader (zip64 aware). Mailboxes are scanned for message boundaries and
+   only the headers are read up front, so multi-GB files open quickly.
    ===================================================================== */
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const utf8 = new TextDecoder('utf-8');
 const nf = new Intl.NumberFormat();
+/* Engines keep substrings as views into their parent string, so a short subject can pin a
+   whole 48 KB message chunk in memory. Copy list fields into standalone strings. */
+const detach = o => JSON.parse(JSON.stringify(o));
 const fmtN = n => nf.format(n);
 
 /* ---------------------------- ZIP reader ---------------------------- */
@@ -454,12 +468,30 @@ function getAddresses(xml, tag) {
   }
   return out;
 }
+/* HTML to plain text for previews and search. Written to stay linear on hostile input
+   (unclosed tags or comments), unlike lazy regexes that rescan to the end each time. */
 function stripHtml(html) {
-  return decodeEnt(html
-    .replace(/<(style|script|head)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<(br|\/p|\/div|\/tr|\/li|\/h\d|\/table)\b[^>]*>/gi, '\n')
-    .replace(/<[^>]+>/g, ' '));
+  if (!html) return '';
+  const low = html.toLowerCase();
+  const re = /<(style|script|head)\b|<!--/g;
+  let out = '', i = 0, m;
+  while ((m = re.exec(low))) {
+    out += html.slice(i, m.index) + ' ';
+    let j;
+    if (m[0] === '<!--') { j = low.indexOf('-->', re.lastIndex); j = j < 0 ? low.length : j + 3; }
+    else {
+      j = low.indexOf('</' + m[1], re.lastIndex);
+      if (m[1] === 'head') { const b = low.indexOf('<body', re.lastIndex); if (b >= 0 && (j < 0 || b < j)) j = b; }
+      if (j < 0 && m[1] === 'head') { const k = low.indexOf('>', re.lastIndex); j = k < 0 ? low.length : k + 1; } // unclosed head: drop only the tag
+      else if (j < 0) j = low.length; // unclosed style/script (often cut by a preview slice): drop the rest
+      else if (low.startsWith('</', j)) { const k = low.indexOf('>', j); j = k < 0 ? low.length : k + 1; }
+    }
+    i = j; re.lastIndex = j;
+  }
+  out += html.slice(i);
+  return decodeEnt(out
+    .replace(/<(br|\/p|\/div|\/tr|\/li|\/h\d|\/table)\b[^<>]*>/gi, '\n')
+    .replace(/<[^<>]+>/g, ' '));
 }
 function parseDate(s) {
   if (!s) return 0;
@@ -497,15 +529,15 @@ function extractMeta(xml) {
   let preview = getText(xml, 'OPFMessageCopyPreview');
   if (!preview) preview = getText(xml, 'OPFMessageCopyBody').slice(0, 2000);
   if (!preview) preview = stripHtml(getText(xml, 'OPFMessageCopyHTMLBody').slice(0, 20000));
-  preview = preview.replace(/\s+/g, ' ').trim().slice(0, 220);
+  preview = preview.slice(0, 1000).replace(/\s+/g, ' ').trim().slice(0, 220);
   const atts = getAttachments(xml);
   const hasAtt = isTrue(getText(xml, 'OPFMessageGetHasAttachment')) || atts.length > 0;
   const unread = isFalse(getText(xml, 'OPFMessageGetIsRead'));
   const people = [...from, ...to].map(a => a.name + ' ' + a.email).join(' ');
-  return {
+  return detach({
     subject, from, to, date, preview, hasAtt, unread,
     s: (subject + ' ' + people + ' ' + preview + ' ' + atts.map(a => a.name).join(' ')).toLowerCase(),
-  };
+  });
 }
 
 function extractFull(xml) {
@@ -533,7 +565,7 @@ function fmtListDate(ms) {
   if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
-const fmtFull = ms => ms ? new Date(ms).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' }) : '';
+const fmtFull = ms => ms ? new Date(ms).toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
 function fmtSize(b) {
   if (!b) return '';
   if (b < 1024) return b + ' B';
@@ -544,11 +576,13 @@ const addrLabel = a => a.name || a.email || '(unknown)';
 const addrFull = a => a.name && a.email && a.name !== a.email ? `${a.name} <${a.email}>` : (a.email || a.name);
 function initials(a) {
   const s = (a && (a.name || a.email)) || '?';
-  const parts = s.replace(/<.*?>|["']/g, '').split(/[\s@._-]+/).filter(Boolean);
+  const parts = s.slice(0, 200).replace(/<[^<>]*>|["']/g, '').split(/[\s@._-]+/).filter(Boolean);
   return ((parts[0] || '?')[0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
 }
 function hue(str) { let h = 0; for (const ch of str || '') h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; }
-const safeName = s => (s || 'untitled').replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, '_').trim().slice(0, 120) || 'untitled';
+const BIDI = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g; // can disguise extensions ("invoice\u202efdp.exe")
+const cleanName = s => (s || '').replace(BIDI, '');
+const safeName = s => cleanName(s || 'untitled').replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, '_').trim().slice(0, 120) || 'untitled';
 
 function download(blob, name) {
   const u = URL.createObjectURL(blob);
@@ -590,10 +624,555 @@ function folderIcon(name) {
 }
 const FOLDER_ORDER = ['inbox', 'drafts', 'sent', 'archive', 'trash', 'junk'];
 
-/* ------------------------------ app state ------------------------------ */
-let S = null; // current archive session
-const V = { kind: 'all', key: null, q: '', terms: [], deep: false, asc: false, items: [], sel: null, deepGen: 0, deepHits: new Set(), deepStatus: '' };
-const ROW_H = 72;
+/* ------------------------- byte & text helpers ------------------------- */
+/* "Binary strings" hold one char per byte. x-user-defined keeps ASCII as ASCII and maps
+   0x80-0xFF to U+F780-U+F7FF, so regexes work on structure while bytes stay recoverable. */
+const BIN = (() => {
+  try {
+    const d = new TextDecoder('x-user-defined');
+    if (d.decode(new Uint8Array([0x41, 0xff])).length === 2) return u8 => d.decode(u8);
+  } catch { }
+  return u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return s; };
+})();
+function binToBytes(s) {
+  const u = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); u[i] = c > 0xff ? c - 0xf700 : c; }
+  return u;
+}
+const DECODERS = new Map();
+// Only stateless decoders are cached: Chrome leaks state between decode() calls on
+// a reused iso-2022-jp decoder, so every other charset gets a fresh instance.
+function decoder(label, fatal) {
+  const k = label + (fatal ? '!' : '');
+  let d = DECODERS.get(k);
+  if (d === undefined) {
+    try { d = new TextDecoder(label, { fatal: !!fatal }); } catch { d = null; }
+    if (!d || d.encoding === 'utf-8' || d.encoding === 'windows-1252') DECODERS.set(k, d);
+  }
+  return d;
+}
+const CHARSET_ALIASES = { utf8: 'utf-8', 'utf-8n': 'utf-8', latin1: 'iso-8859-1', 'x-sjis': 'shift_jis', 'x-gbk': 'gbk', cp936: 'gbk', ansi_x3_4_1968: 'us-ascii', 'iso_8859_1': 'iso-8859-1' };
+function decodeText(u8, charset) {
+  let cs = (charset || '').trim().toLowerCase().replace(/^["']+|["']+$/g, '');
+  cs = CHARSET_ALIASES[cs] || cs;
+  if (/^(utf-16|unicode|ucs-2)$/.test(cs)) cs = utf16Order(u8, cs);
+  const lenient = !cs || cs === 'utf-8' || cs === 'us-ascii' || cs === 'ascii' || cs === 'unknown-8bit' || cs === 'x-unknown' || cs === 'unknown';
+  if (!lenient) { const d = decoder(cs, false); if (d) return d.decode(u8); }
+  // UTF-8 (declared, undeclared or unknown): use it if valid; otherwise decode mixed text.
+  try { return decoder('utf-8', true).decode(u8); } catch { }
+  return hybridUtf8(u8);
+}
+/* Mail often mixes encodings (a Latin-1 signature pasted into a UTF-8 message, or a list footer).
+   Decode every valid UTF-8 sequence as UTF-8 and every other byte as Windows-1252, as Thunderbird
+   does, and drop a character that was cut off at the very end of a partial read. */
+let CP1252 = null, decodingPartial = false; // set while list previews decode a slice of a message
+function hybridUtf8(u8) {
+  if (!CP1252) { const d = decoder('windows-1252', false); CP1252 = []; for (let b = 0; b < 256; b++) CP1252.push(d.decode(Uint8Array.of(b))); }
+  const utf = decoder('utf-8', false), n = u8.length;
+  let good = 0; // plain legacy text (no valid multi-byte sequence at all) takes the fast path
+  for (let i = 0; i < n - 1 && !good; i++) if (u8[i] >= 0xc2 && u8[i] <= 0xf4 && (u8[i + 1] & 0xc0) === 0x80) good = 1;
+  if (!good) return decoder('windows-1252', false).decode(u8);
+  let out = '', run = 0, i = 0;
+  const flush = end => { if (end > run) out += utf.decode(u8.subarray(run, end)); };
+  while (i < n) {
+    const b = u8[i];
+    if (b < 0x80) { i++; continue; }
+    const len = b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
+    let ok = len > 0 && i + len <= n;
+    for (let k = 1; ok && k < len; k++) if ((u8[i + k] & 0xc0) !== 0x80) ok = false;
+    if (ok && len === 3 && ((b === 0xe0 && u8[i + 1] < 0xa0) || (b === 0xed && u8[i + 1] > 0x9f))) ok = false;
+    if (ok && len === 4 && ((b === 0xf0 && u8[i + 1] < 0x90) || (b === 0xf4 && u8[i + 1] > 0x8f))) ok = false;
+    if (ok) { i += len; continue; }
+    if (decodingPartial && len && i + len > n) { let k = i + 1; while (k < n && (u8[k] & 0xc0) === 0x80) k++; if (k === n) { flush(i); return out; } }
+    flush(i); out += CP1252[b]; i++; run = i;
+  }
+  flush(n);
+  return out;
+}
+/* UTF-16 byte order: the BOM if present, else where the zero bytes of ASCII text fall, else the label's default
+   (RFC 2781 says big-endian for "utf-16"; Microsoft's "unicode" means little-endian). */
+function utf16Order(u8, cs) {
+  if (u8[0] === 0xfe && u8[1] === 0xff) return 'utf-16be';
+  if (u8[0] === 0xff && u8[1] === 0xfe) return 'utf-16le';
+  let even = 0, odd = 0;
+  for (let i = 0; i < Math.min(u8.length, 512); i++) if (!u8[i]) { if (i & 1) odd++; else even++; }
+  const units = Math.min(u8.length, 512) / 2, enough = Math.max(4, units / 8);
+  if (odd >= enough && odd > even * 2) return 'utf-16le';
+  if (even >= enough && even > odd * 2) return 'utf-16be';
+  return cs === 'utf-16' ? 'utf-16be' : 'utf-16le';
+}
+const textEnc = new TextEncoder();
+const readRange = async (file, a, b) => new Uint8Array(await file.slice(a, b).arrayBuffer());
+async function pool(n, tasks) {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, tasks.length) }, async () => { while (i < tasks.length) await tasks[i++](); }));
+}
+/* Group items (sorted by position) into runs that can be read from disk in one go. */
+function makeBatches(list, rangeOf, maxBytes = 8 * 1048576, maxCount = 400) {
+  const out = []; let cur = null;
+  for (const item of list) {
+    const [a, b] = rangeOf(item);
+    if (cur && a >= cur.start && b - cur.start <= maxBytes && cur.items.length < maxCount) { cur.items.push(item); cur.end = Math.max(cur.end, b); }
+    else { cur = { start: a, end: b, items: [item] }; out.push(cur); }
+  }
+  return out;
+}
+
+/* ------------------------------ MIME (.eml / .mbox) ------------------------------ */
+const first = (H, k) => (H[k] && H[k][0]) || '';
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const HEX = c => (c >= 48 && c <= 57) ? c - 48 : (c >= 65 && c <= 70) ? c - 55 : (c >= 97 && c <= 102) ? c - 87 : -1;
+
+function decodeB64(s) {
+  if (!/^[A-Za-z0-9+/\s]*=*\s*$/.test(s) || /\S[ \t]+\S/.test(s)) { // (a line with spaces between words is prose)
+    // Padding mid-way (chunk-by-chunk encoders), stray characters, or a plain-text footer appended by a
+    // mailing list. Decode each padded segment on its own and stop at the first line that is prose.
+    const segs = []; let cur = '', started = false, typical = 0, ended = false;
+    for (const line of s.split(/\r?\n/)) {
+      const raw = line.trim();
+      if (!raw) continue;
+      if (/\S\s+\S/.test(raw) || /^([-_=*~#.])\1+$/.test(raw)) { if (started) break; continue; } // prose, or a rule line
+      let t = raw;
+      if (/^[A-Za-z0-9_-]+={0,2}$/.test(t) && /[-_]/.test(t) && !/[+/]/.test(t)) t = t.replace(/-/g, '+').replace(/_/g, '/'); // URL-safe alphabet
+      const pure = /^[A-Za-z0-9+/]+(?:={1,2}[A-Za-z0-9+/]+)*={0,2}$/.test(t); // (padding may sit mid-line between chunks)
+      if (!pure) {
+        if (!started) continue;
+        const cleaned = t.replace(/[^A-Za-z0-9+/=]/g, ''); // a stray character inside an otherwise normal line
+        if (ended || t.length - cleaned.length > 2 || Math.abs(raw.length - typical) > 2) break;
+        t = cleaned;
+      } else if (ended && (t.length % 4 || (t.length < 8 && !t.endsWith('=')))) break; // a footer word after the data
+      if (!started) { started = true; typical = raw.length; }
+      if (/=$/.test(t) || raw.length < typical - 2) ended = true; else if (ended && pure) ended = false;
+      const pieces = t.split(/=+/);
+      for (let k = 0; k < pieces.length - 1; k++) { segs.push(cur + pieces[k]); cur = ''; }
+      cur += pieces[pieces.length - 1];
+    }
+    if (cur) segs.push(cur);
+    const parts = segs.map(x => decodeB64(x));
+    const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0));
+    let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
+  s = s.replace(/[^A-Za-z0-9+/]/g, '');
+  const r = s.length % 4;
+  if (r === 1) s = s.slice(0, -1); else if (r) s += r === 2 ? '==' : '=';
+  let bin;
+  try { bin = atob(s); } catch { return new Uint8Array(0); }
+  const u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u;
+}
+function decodeQP(s) {
+  s = s.replace(/=[ \t]*\r?\n/g, '');
+  const out = new Uint8Array(s.length); let o = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 61 && i + 2 < s.length) {
+      const h1 = HEX(s.charCodeAt(i + 1)), h2 = HEX(s.charCodeAt(i + 2));
+      if (h1 >= 0 && h2 >= 0) { out[o++] = h1 * 16 + h2; i += 2; continue; }
+    }
+    out[o++] = c > 0xff ? c - 0xf700 : c;
+  }
+  return out.subarray(0, o);
+}
+const EWORD = /=\?([^?\s]+)\?([BbQq])\?([^?]*)\?=/g;
+function decodeWords(s) {
+  if (!s || s.indexOf('=?') < 0) return s || '';
+  s = s.replace(/(=\?[^?\s]+\?[BbQq]\?[^?]*\?=)\s+(?==\?[^?\s]+\?[BbQq]\?[^?]*\?=)/g, '$1');
+  return s.replace(/(?:=\?[^?\s]+\?[BbQq]\?[^?]*\?=)+/g, run => {
+    let out = '', cs = null, parts = [];
+    const flush = () => {
+      if (!parts.length) return;
+      const n = parts.reduce((a, p) => a + p.length, 0);
+      let u = new Uint8Array(n);
+      let o = 0; for (const p of parts) { u.set(p, o); o += p.length; }
+      if (/^iso-2022/.test(cs)) { // back-to-back escape sequences at word joins make the decoder emit U+FFFD
+        const v = new Uint8Array(u.length); let w = 0;
+        for (let i = 0; i < u.length; i++) {
+          if (u[i] === 0x1b) {
+            const len = u[i + 1] === 0x24 && (u[i + 2] === 0x28 || u[i + 2] === 0x29) ? 4 : 3;
+            if (u[i + len] === 0x1b) { i += len - 1; continue; }
+          }
+          v[w++] = u[i];
+        }
+        u = v.subarray(0, w);
+      }
+      out += decodeText(u, cs); parts = [];
+    };
+    let m; EWORD.lastIndex = 0;
+    while ((m = EWORD.exec(run))) {
+      const c = m[1].replace(/\*.*$/, '').toLowerCase();
+      if (c !== cs) { flush(); cs = c; }
+      parts.push(/b/i.test(m[2]) ? decodeB64(m[3].replace(/\s+/g, '')) : decodeQP(m[3].replace(/\s+/g, '').replace(/_/g, ' ')));
+    }
+    flush();
+    return out;
+  });
+}
+function pctBytes(s) {
+  const out = [];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '%' && HEX(s.charCodeAt(i + 1)) >= 0 && HEX(s.charCodeAt(i + 2)) >= 0) { out.push(HEX(s.charCodeAt(i + 1)) * 16 + HEX(s.charCodeAt(i + 2))); i += 2; }
+    else { const c = s.charCodeAt(i); if (c < 0x80) out.push(c); else for (const b of textEnc.encode(s[i])) out.push(b); }
+  }
+  return new Uint8Array(out);
+}
+/* "type/sub; a=b; c*=utf-8''%E2%82%AC" -> { value, params }, with RFC 2231 and RFC 2047 decoding */
+function parseHeaderValue(v) {
+  const out = { value: '', params: Object.create(null) };
+  if (!v) return out;
+  const i = v.indexOf(';');
+  out.value = (i < 0 ? v : v.slice(0, i)).trim().toLowerCase().replace(/^"|"$/g, '');
+  if (i < 0) return out;
+  const re = /;\s*([^\s=;]+)\s*=\s*("(?:[^"\\]|\\.)*(?:"|$)|[^;]*)/g;
+  const groups = Object.create(null); let m;
+  while ((m = re.exec(v.slice(i)))) {
+    const k = m[1].toLowerCase();
+    let val = m[2].trim();
+    if (val[0] === '"') val = val.replace(/^"|"$/g, '').replace(/\\(.)/g, '$1');
+    const mm = /^([^*]+)(?:\*(\d+))?(\*)?$/.exec(k);
+    if (!mm) continue;
+    (groups[mm[1]] || (groups[mm[1]] = [])).push({ n: mm[2] === undefined ? -1 : +mm[2], ext: !!mm[3], val });
+  }
+  for (const name in groups) {
+    let segs = groups[name];
+    const ext1 = segs.find(s => s.n < 0 && s.ext);
+    const conts = segs.filter(s => s.n >= 0).sort((a, b) => a.n - b.n);
+    if (ext1) segs = [ext1]; else if (conts.length) segs = conts; else segs = [segs[0]];
+    if (!segs.some(s => s.ext)) { out.params[name] = decodeWords(segs.map(s => s.val).join('')); continue; }
+    let charset = 'utf-8'; const bytes = [];
+    segs.forEach((s, j) => {
+      let val = s.val;
+      if (s.ext && j === 0) {
+        const q = /^([^']*)'[^']*'([\s\S]*)$/.exec(val);
+        if (q) { charset = q[1] || 'utf-8'; val = q[2]; }
+      }
+      const b = s.ext ? pctBytes(val) : textEnc.encode(val);
+      for (const x of b) bytes.push(x);
+    });
+    out.params[name] = decodeText(new Uint8Array(bytes), charset);
+  }
+  return out;
+}
+function parseHeaders(block) {
+  const H = Object.create(null);
+  if (!block) return H;
+  const text = decodeText(binToBytes(block), '');
+  for (const line of text.replace(/\r?\n(?=[ \t])/g, '').split(/\r?\n/)) {
+    const i = line.indexOf(':');
+    if (i <= 0) continue;
+    const k = line.slice(0, i).trim().toLowerCase();
+    if (!k || /\s/.test(k)) continue;
+    (H[k] || (H[k] = [])).push(line.slice(i + 1).trim());
+  }
+  return H;
+}
+function splitHeadBody(s) {
+  if (/^[ \t]*\r?\n/.test(s)) return ['', s.replace(/^[ \t]*\r?\n/, '')];
+  const m = /\r?\n[ \t]*\r?\n/.exec(s);
+  return m ? [s.slice(0, m.index), s.slice(m.index + m[0].length)] : [s, ''];
+}
+/* Parse a MIME entity held in a binary string into a tree. Leaves keep their encoded body. */
+function parseEntity(s, depth = 0, defType = 'text/plain') {
+  const [hb, body] = splitHeadBody(s);
+  const H = parseHeaders(hb);
+  const ct = parseHeaderValue(first(H, 'content-type') || defType);
+  let type = ct.value;
+  if (!/^[\w.+-]+\/[\w.+-]+$/.test(type)) type = /^multipart\//.test(type) ? type : 'text/plain';
+  const cd = parseHeaderValue(first(H, 'content-disposition'));
+  const node = { headers: H, type, params: ct.params, disp: cd.value, dparams: cd.params, cte: (first(H, 'content-transfer-encoding') || '').trim().toLowerCase(), body, children: null };
+  if (type.startsWith('multipart/') && depth < 40) {
+    const b = ct.params.boundary;
+    if (b) {
+      const re = new RegExp('(?:^|\\r?\\n)--' + reEsc(b) + '(--)?[ \\t]*(?=\\r?\\n|$)', 'g');
+      const marks = []; let m;
+      while ((m = re.exec(body))) { marks.push({ s: m.index, e: m.index + m[0].length, close: !!m[1] }); if (m[1]) break; }
+      if (marks.length && !marks[0].close) {
+        node.children = [];
+        for (let i = 0; i < marks.length && !marks[i].close; i++) {
+          const end = i + 1 < marks.length ? marks[i + 1].s : body.length;
+          const part = body.slice(marks[i].e, end).replace(/^\r?\n/, '');
+          node.children.push(parseEntity(part, depth + 1, type === 'multipart/digest' ? 'message/rfc822' : 'text/plain'));
+        }
+        node.body = '';
+        return node;
+      }
+    }
+    node.type = 'text/plain'; // multipart without usable boundary: show it as text
+  }
+  return node;
+}
+function decodeBody(n) {
+  if (n.cte === 'base64') return decodeB64(n.body);
+  if (n.cte === 'quoted-printable') return decodeQP(n.body);
+  return binToBytes(n.body);
+}
+/* RFC 3676 format=flowed: join soft-broken lines, but only within the same quote depth. */
+function unflow(t, delsp) {
+  const out = []; let cur = null, curDepth = 0;
+  const end = () => { if (cur !== null) out.push((curDepth ? '>'.repeat(curDepth) + ' ' : '') + cur); cur = null; };
+  for (const raw of t.split(/\r?\n/)) {
+    const marks = /^(?:> ?)*>|^/.exec(raw)[0];
+    const depth = (marks.match(/>/g) || []).length;
+    let rest = raw.slice(marks.length);
+    if (rest[0] === ' ') rest = rest.slice(1); // space-stuffing
+    if (cur !== null && depth !== curDepth) end();
+    const flowed = rest.endsWith(' ') && rest !== '-- ';
+    const piece = flowed && delsp ? rest.slice(0, -1) : rest;
+    if (cur === null) { cur = piece; curDepth = depth; } else cur += piece;
+    if (!flowed) end();
+  }
+  end();
+  return out.join('\n');
+}
+function nodeText(n) {
+  let cs = n.params.charset;
+  const bytes = decodeBody(n);
+  if (!cs && n.type === 'text/html') {
+    const m = /<meta[^<>]{0,300}?charset\s*=\s*["']?([\w:.-]+)/i.exec(BIN(bytes.subarray(0, 4096)));
+    if (m) cs = /^(utf-?16|unicode|ucs-?2|utf-?32)/i.test(m[1]) ? 'utf-8' : m[1]; // as browsers do
+  }
+  const t = decodeText(bytes, cs);
+  return n.type === 'text/plain' && (n.params.format || '').toLowerCase() === 'flowed' ? unflow(t, (n.params.delsp || '').toLowerCase() === 'yes') : t;
+}
+const EXT_FOR = {
+  'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/heic': '.heic', 'application/pdf': '.pdf',
+  'text/calendar': '.ics', 'text/plain': '.txt', 'text/html': '.html', 'message/rfc822': '.eml', 'application/zip': '.zip',
+  'application/ms-tnef': '.dat', 'application/pkcs7-signature': '.p7s', 'application/x-pkcs7-signature': '.p7s', 'text/vcard': '.vcf', 'text/x-vcard': '.vcf',
+};
+function nestedSubject(n) {
+  try {
+    const [hb] = splitHeadBody(BIN(decodeBody(n)).slice(0, 65536));
+    return decodeWords(first(parseHeaders(hb), 'subject')).trim();
+  } catch { return ''; }
+}
+function attName(n) {
+  let name = n.dparams.filename || n.params.name || '';
+  if (!name && n.type === 'message/rfc822') name = (nestedSubject(n) || 'Attached message') + '.eml';
+  if (!name && n.type === 'text/calendar') name = 'invite.ics';
+  return cleanName(name) || 'attachment' + (EXT_FOR[n.type] || '');
+}
+function analyzeMime(root) {
+  const res = { html: [], text: [], alt: null, atts: [] };
+  const walk = n => {
+    if (n.children) {
+      if (n.type === 'multipart/alternative') {
+        const usable = n.children.filter(c => c.disp !== 'attachment');
+        let rich = null;
+        for (const c of usable) if (c.type === 'text/html' || c.children) rich = c;
+        const plain = usable.find(c => c.type === 'text/plain' && !c.children);
+        if (rich) { walk(rich); if (plain && !res.alt) res.alt = plain; }
+        else if (plain) walk(plain);
+        else if (usable.length) walk(usable[usable.length - 1]);
+        for (const c of n.children) if (c !== rich && c !== plain && !c.children && (c.disp === 'attachment' || c.type === 'text/calendar')) res.atts.push(c);
+      } else if (n.type === 'multipart/related') {
+        const start = normCid(n.params.start || '');
+        const root = (start && n.children.find(c => normCid(first(c.headers, 'content-id')) === start)) || n.children[0];
+        if (root) walk(root);
+        for (const c of n.children) if (c !== root) { if (c.children) walk(c); else res.atts.push(c); }
+      } else n.children.forEach(walk);
+      return;
+    }
+    if (n.disp === 'attachment') res.atts.push(n);
+    else if (n.type === 'text/html') res.html.push(n);
+    else if (n.type === 'text/plain' && (n === root || !(n.dparams.filename || n.params.name))) res.text.push(n);
+    else if (n.type === 'text/plain' && !n.disp && !n.dparams.filename && !res.text.length && !res.html.length && !res.alt) { res.text.push(n); res.atts.push(n); }
+    else res.atts.push(n);
+  };
+  walk(root);
+  return res;
+}
+/* Walk an address header the way RFC 5322 reads it: comments nest and allow \-escapes, quoted strings
+   allow \-escapes, and encoded words are opaque. visit(c, i, state) sees each top-level character. */
+const EWORD_AT = /=\?[^?\s]+\?[BbQq]\?[^?]*\?=/y;
+function scanAddr(t, visit) { // returns where an unclosed quote or comment opened, or -1
+  let q = false, p = 0, openAt = -1;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (p) { if (c === '\\') i++; else if (c === '(') p++; else if (c === ')') p--; continue; }
+    if (q) { if (c === '\\') i++; else if (c === '"') q = false; continue; }
+    if (c === '=' && t[i + 1] === '?') { EWORD_AT.lastIndex = i; if (EWORD_AT.test(t)) { i = EWORD_AT.lastIndex - 1; continue; } }
+    if (c === '"') { q = true; openAt = i; }
+    else if (c === '(') { p = 1; openAt = i; }
+    else visit(c, i);
+  }
+  return q || p > 0 ? openAt : -1;
+}
+function splitAddrs(s) {
+  const out = []; let start = 0, a = 0;
+  const openAt = scanAddr(s, (c, i) => {
+    if (c === '<') a++;
+    else if (c === '>') a = Math.max(0, a - 1);
+    else if ((c === ',' || c === ';') && !a) { out.push(s.slice(start, i)); start = i + 1; }
+  });
+  if (openAt < 0) out.push(s.slice(start));
+  else { // an unclosed quote or comment would swallow the rest: split only that part on plain commas
+    const tail = s.slice(openAt).split(/[,;]/);
+    out.push(s.slice(start, openAt) + tail[0]);
+    for (let k = 1; k < tail.length; k++) out.push(tail[k]);
+  }
+  return out.map(x => x.trim()).filter(Boolean);
+}
+/* The angle-addr is the last '<' that is outside quotes and comments, so a display name
+   such as "PayPal <service@paypal.com>" cannot stand in for the real address. */
+function angleAddr(t) {
+  let lt = -1;
+  const openAt = scanAddr(t, (c, i) => { if (c === '<') lt = i; });
+  if (lt < 0) { // a balanced 'addr (comment <x>)' is an addr-spec, handled by the caller
+    if (openAt < 0 || /^[^\s(<>"]+@[^\s(<>"]+$/.test(t.slice(0, openAt).trim())) return null;
+    // e.g. 'John (Sales <john@x.org>': the only '<' is inside the unclosed part; use the last one there
+    const m = /<([^<>]*)>[^<>]*$/.exec(t.slice(openAt));
+    return m ? [t.slice(0, openAt + m.index), m[1]] : null;
+  }
+  const gt = t.indexOf('>', lt);
+  return gt < 0 ? null : [t.slice(0, lt), t.slice(lt + 1, gt)];
+}
+function parseAddrList(s) {
+  const out = [];
+  for (let t of splitAddrs((s || '').slice(0, 262144))) {
+    t = t.replace(/^[^"<@(]*:\s*/, '').trim(); // group syntax "Team: a@b, c@d;"
+    if (!t) continue;
+    let name = '', email = '', m = angleAddr(t);
+    if (m) { name = m[0].trim(); email = m[1].trim(); }
+    else if (/^[^\s(]*@/.test(t)) { // addr-spec, optionally followed by a (comment) holding the name
+      const k = t.search(/[\s(]/);
+      email = k < 0 ? t : t.slice(0, k);
+      const rest = k < 0 ? '' : t.slice(k).trim();
+      name = rest[0] === '(' ? rest.replace(/^\(|\)$/g, '').replace(/\\(.)/g, '$1') : '';
+    }
+    else if (t.includes('@')) email = t;
+    else name = t;
+    name = decodeWords(name.replace(/^"([\s\S]*)"$/, '$1').replace(/\\(.)/g, '$1')).replace(/\s+/g, ' ').trim();
+    email = email.replace(/^mailto:/i, '').trim();
+    if (name === email) name = '';
+    if (email || /[\p{L}\p{N}]/u.test(name)) out.push({ name, email }); // skip leftovers such as a lone '"'
+    if (out.length >= 2000) break; // enough for any real recipient list
+  }
+  return out;
+}
+const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+const ZONES = { ut: 0, utc: 0, gmt: 0, z: 0, est: -5, edt: -4, cst: -6, cdt: -5, mst: -7, mdt: -6, pst: -8, pdt: -7, cet: 1, cest: 2, bst: 1, met: 1, mest: 2, jst: 9 };
+function mkDate(y, mon, d, hh, mm, ss, z) {
+  const mo = MONTHS[(mon || '').slice(0, 3).toLowerCase()];
+  if (mo === undefined || !d || d > 31 || hh > 24 || mm > 59) return 0;
+  if (y < 100) y += y < 50 ? 2000 : 1900;
+  let off = 0;
+  if (z) {
+    if (/^[+-]\d/.test(z)) { const t = z.replace(':', ''); off = (t[0] === '-' ? -1 : 1) * (parseInt(t.slice(1, 3), 10) * 60 + (parseInt(t.slice(3, 5), 10) || 0)); }
+    else { const zz = ZONES[z.toLowerCase()]; if (zz !== undefined) off = zz * 60; }
+  }
+  const v = Date.UTC(y, mo, d, hh, mm, ss || 0) - off * 60000;
+  return isNaN(v) ? 0 : v;
+}
+function parseMailDate(s) {
+  if (!s) return 0;
+  s = s.slice(0, 256).replace(/\([^()]*\)/g, ' ').trim(); // real dates are short; the cap keeps regexes cheap
+  let m = /(\d{1,2})[\s-]+([A-Za-z]{3,9})\.?[\s-]+(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([+-]\d{2}:?\d{2}|[A-Za-z]{1,5}\b)?/.exec(s);
+  if (m) return mkDate(+m[3], m[2], +m[1], +m[4], +m[5], +(m[6] || 0), m[7]);
+  m = /([A-Za-z]{3})[a-z]{0,6}\s+(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s+(?:([+-]\d{4}|[A-Za-z]{1,5})\s+)?(\d{4})/.exec(s); // asctime, as in mbox "From " lines
+  if (m) return mkDate(+m[7], m[1], +m[2], +m[3], +m[4], +(m[5] || 0), m[6]);
+  const v = Date.parse(s);
+  return isNaN(v) ? 0 : v;
+}
+function mimeHeaderInfo(H) {
+  const all = k => (H[k] || []).join(', ');
+  let date = parseMailDate(first(H, 'date'));
+  if (!date && H.received) { const r = H.received[0]; date = parseMailDate(r.slice(r.lastIndexOf(';') + 1)); }
+  let from = parseAddrList(first(H, 'from'));
+  if (!from.length) from = parseAddrList(first(H, 'sender'));
+  return {
+    subject: decodeWords(first(H, 'subject')).replace(/\s+/g, ' ').trim(),
+    from, to: parseAddrList(all('to')), cc: parseAddrList(all('cc')), bcc: parseAddrList(all('bcc')),
+    replyTo: parseAddrList(first(H, 'reply-to')), date, messageId: first(H, 'message-id'),
+  };
+}
+function gmailLabels(H) {
+  const v = decodeWords(first(H, 'x-gmail-labels'));
+  if (!v) return [];
+  const out = []; let cur = '', q = false;
+  for (const c of v) {
+    if (c === '"') q = !q;
+    else if (c === ',' && !q) { out.push(cur.trim()); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur.trim());
+  return out.filter(l => l && !/^(opened|unread)$/i.test(l));
+}
+function mimeUnread(H) {
+  const gl = first(H, 'x-gmail-labels');
+  if (gl) return /(^|,)\s*"?unread"?\s*(,|$)/i.test(gl);
+  const mz = first(H, 'x-mozilla-status'); // Thunderbird's live state beats a stale Status: header
+  if (/^[0-9a-f]{4}$/i.test(mz)) return !(parseInt(mz, 16) & 1);
+  const st = H.status ? H.status.join('') : null;
+  if (st !== null) return !/R/.test(st);
+  return false;
+}
+/* Thunderbird marks deleted-but-not-compacted messages with flag 0x0008; c-client uses X-Status: D. */
+function mimeDeleted(H) {
+  const mz = first(H, 'x-mozilla-status');
+  return (/^[0-9a-f]{4}$/i.test(mz) && !!(parseInt(mz, 16) & 8)) || /D/.test(first(H, 'x-status'));
+}
+/* Light parse for the message list: headers, a preview and flags. `s` may be truncated. */
+function mimeMeta(s, truncated) {
+  const root = parseEntity(s);
+  const info = mimeHeaderInfo(root.headers);
+  const res = analyzeMime(root);
+  let preview = '';
+  decodingPartial = !!truncated; // the preview part may be cut off at the end of the slice
+  try {
+    if (res.alt) preview = nodeText(res.alt);
+    else if (res.text.length) preview = nodeText(res.text[0]);
+    else if (res.html.length) preview = stripHtml(nodeText(res.html[0]).slice(0, 40000));
+  } catch { } finally { decodingPartial = false; }
+  preview = preview.slice(0, 1000).replace(/\s+/g, ' ').trim().slice(0, 220);
+  const atts = res.atts.filter(n => n.disp === 'attachment' || !first(n.headers, 'content-id'));
+  const names = atts.map(attName);
+  const people = [...info.from, ...info.to, ...info.cc].map(a => a.name + ' ' + a.email).join(' ');
+  return detach({
+    subject: info.subject, from: info.from, to: info.to, date: info.date, preview,
+    hasAtt: atts.length > 0 || (truncated && root.type === 'multipart/mixed'),
+    unread: mimeUnread(root.headers), deleted: mimeDeleted(root.headers), labels: gmailLabels(root.headers),
+    s: (info.subject + ' ' + people + ' ' + preview + ' ' + names.join(' ')).toLowerCase(),
+  });
+}
+/* Full parse into the message shape the reader uses. `raw` is the original bytes. */
+function mimeMessage(s, raw) {
+  const root = parseEntity(s);
+  const info = mimeHeaderInfo(root.headers);
+  const res = analyzeMime(root);
+  const safe = n => { try { return nodeText(n); } catch { return ''; } };
+  const extra = res.text.map(safe).filter(t => t.trim());
+  let html = res.html.map(safe).join('\n');
+  if (html && extra.length) html += extra.map(t => '<pre style="white-space:pre-wrap;font:inherit">' + esc(t) + '</pre>').join('');
+  const text = [res.alt ? safe(res.alt) : '', ...extra].filter(Boolean).join('\n\n');
+  const atts = res.atts.map(n => {
+    const name = attName(n);
+    const len = n.body.length;
+    return {
+      name, type: n.type, cid: first(n.headers, 'content-id'), available: true,
+      size: n.cte === 'base64' ? Math.floor(len * 0.74) : n.cte === 'quoted-printable' ? Math.floor(len * 0.9) : len,
+      nested: n.type === 'message/rfc822' || /\.eml$/i.test(name),
+      getBlob: async () => new Blob([decodeBody(n)], { type: n.type }),
+    };
+  });
+  return {
+    ...info, sent: info.date, html, text, atts,
+    sourceText: () => {
+      const cut = raw.length > 3 * 1048576;
+      decodingPartial = cut;
+      try { return decodeText(raw.subarray(0, 3 * 1048576), 'utf-8') + (cut ? '\n\n[… source truncated for display …]' : ''); }
+      finally { decodingPartial = false; }
+    },
+    saveEml: async () => download(new Blob([raw], { type: 'message/rfc822' }), safeName(info.subject || 'message') + '.eml'),
+  };
+}
+const unescapeFrom = s => s.replace(/^>(>*From )/gm, '$1');
+
+/* ------------------------------ sources ------------------------------ */
+/* A source is one opened thing (an .olm archive, an mbox file, or a set of .eml files).
+   Each implements register(sess), index(sess), loadFull(m), batchesFor(list), bodyText(m, chunk). */
+const HEAD = 48 * 1024; // bytes of each message read for the list (headers + preview)
+const MIME_GROUP = 'Mail files';
 
 function accountOf(prefix) {
   const segs = prefix.split('/').filter(Boolean);
@@ -601,88 +1180,458 @@ function accountOf(prefix) {
   if (segs[0] === 'Local' || !segs.length) return 'On My Computer';
   return segs.join('/');
 }
-
-function folderFor(account, path) {
+function folderFor(sess, account, path) {
   const key = account + '\u0001' + path;
-  let f = S.folders.get(key);
+  let f = sess.folders.get(key);
   if (!f) {
     const i = path.lastIndexOf('/');
-    if (i > 0) folderFor(account, path.slice(0, i));
+    if (i > 0) folderFor(sess, account, path.slice(0, i));
     f = { key, account, path, name: path.slice(i + 1) || 'Mail', msgs: [], total: 0, unread: 0 };
-    S.folders.set(key, f);
-    if (!S.accounts.includes(account)) S.accounts.push(account);
+    sess.folders.set(key, f);
+    if (!sess.accounts.includes(account)) sess.accounts.push(account);
   }
   return f;
 }
+function addMessage(sess, m, f) {
+  sess.messages.push(m);
+  f.msgs.push(m);
+  if (m.unread) f.unread++;
+}
 
-/* --------------------------- opening a file --------------------------- */
-async function openFile(file) {
-  if (!file) return;
-  const sess = {
-    file, zip: new Zip(file), byName: new Map(), byBase: null, messages: [], folders: new Map(),
-    accounts: [], collections: [], total: 0, done: 0, failed: 0, indexing: true,
+class OlmSource {
+  constructor(file) { this.kind = 'olm'; this.file = file; this.zip = new Zip(file); this.byName = new Map(); this.byBase = null; this.acc = a => a; }
+  async open() { await this.zip.open(); for (const e of this.zip.entries) this.byName.set(e.name, e); }
+  register(sess) {
+    const MSG = /^(.*?)\/?com\.microsoft\.__Messages\/(?:(.*)\/)?([^/]+\.xml)$/i;
+    this.msgList = []; this.otherXml = [];
+    for (const e of this.zip.entries) {
+      const m = MSG.exec(e.name);
+      if (m) {
+        const f = folderFor(sess, this.acc(accountOf(m[1])), m[2] || 'Mail');
+        f.total++; sess.total++;
+        this.msgList.push([e, f]);
+      } else if (/\.xml$/i.test(e.name) && !/com\.microsoft\.__Attachments\//i.test(e.name)) this.otherXml.push(e);
+    }
+  }
+  async index(sess) {
+    await loadCollections(sess, this);
+    if (S !== sess) return;
+    renderSidebar();
+    this.msgList.sort((a, b) => a[0].offset - b[0].offset); // read the file front to back, in large chunks
+    const batches = this.zip.batches(this.msgList, x => x[0]);
+    await pool(3, batches.map(b => async () => {
+      if (S !== sess) return;
+      let chunk = null;
+      try { chunk = await this.zip.readBatch(b); } catch (err) { console.warn('Chunk read failed', err); }
+      await Promise.all(b.items.map(async ([e, f]) => {
+        if (S !== sess) return;
+        try {
+          const m = extractMeta(await this.zip.text(e, chunk));
+          m.src = this; m.ref = e; m.f = f;
+          addMessage(sess, m, f);
+        } catch (err) { sess.failed++; console.warn('Could not read', e.name, err); }
+        sess.done++;
+      }));
+      scheduleRefresh();
+    }));
+    this.msgList = null;
+  }
+  findEntry(url) {
+    if (!url) return null;
+    const u = url.replace(/^file:\/\//i, '').replace(/^\/+/, '');
+    const tries = [u];
+    try { const d = decodeURIComponent(u); if (d !== u) tries.push(d); } catch { }
+    for (const t of tries) { const e = this.byName.get(t); if (e) return e; }
+    if (!this.byBase) {
+      this.byBase = new Map();
+      for (const e of this.zip.entries) {
+        const b = e.name.slice(e.name.lastIndexOf('/') + 1);
+        if (!this.byBase.has(b)) this.byBase.set(b, []);
+        this.byBase.get(b).push(e);
+      }
+    }
+    for (const t of tries) {
+      const list = this.byBase.get(t.slice(t.lastIndexOf('/') + 1));
+      if (!list) continue;
+      const hit = list.find(e => e.name.endsWith('/' + t) || t.endsWith('/' + e.name) || t.endsWith(e.name));
+      if (hit) return hit;
+      if (list.length === 1) return list[0];
+    }
+    return null;
+  }
+  async loadFull(m) {
+    const xml = await this.zip.text(m.ref);
+    const msg = extractFull(xml);
+    msg.atts = msg.atts.map(a => {
+      const entry = this.findEntry(a.url);
+      return {
+        name: a.name, type: a.type, cid: a.cid, size: a.size || (entry ? entry.uncomp : 0), available: !!entry,
+        nested: a.type === 'message/rfc822' || /\.eml$/i.test(a.name),
+        getBlob: () => this.zip.blob(entry, a.type),
+      };
+    });
+    msg.sourceText = () => xml;
+    msg.saveEml = () => exportOlmEml(msg);
+    return msg;
+  }
+  batchesFor(list) {
+    list.sort((a, b) => a.ref.offset - b.ref.offset);
+    return this.zip.batches(list, m => m.ref).map(b => ({ items: b.items, read: () => this.zip.readBatch(b) }));
+  }
+  async bodyText(m, chunk) {
+    const xml = await this.zip.text(m.ref, chunk);
+    return getText(xml, 'OPFMessageCopyBody') + ' ' + stripHtml(getText(xml, 'OPFMessageCopyHTMLBody'));
+  }
+}
+
+const FROM_LINE = /^From \S+\s+[A-Za-z]{3}\s+[A-Za-z]{3}\s+\d{1,2}\s+\d{1,2}:\d\d/; // "From sender Day Mon dd hh:mm"
+/* Find the "From " separator lines of an mbox, reading it in 16 MB chunks. */
+async function scanMbox(file, onProgress, alive) {
+  const size = file.size, CH = 16 * 1048576, starts = [];
+  const lead = await readRange(file, 0, Math.min(size, 4096));
+  let first = lead[0] === 0xef && lead[1] === 0xbb && lead[2] === 0xbf ? 3 : 0; // UTF-8 BOM
+  while (first < lead.length && (lead[first] === 0x0a || lead[first] === 0x0d)) first++;
+  let skipUntil = 0; // set from Content-Length (mboxcl): separators inside that body are not real
+  for (let off = 0; off < size; off += CH) {
+    if (!alive()) return null;
+    const a = Math.max(0, off - 1), u8 = await readRange(file, a, Math.min(size, off + CH + 65536));
+    const stop = Math.min(u8.length, off + CH - a);
+    let i = Math.max(off, first) - a;
+    while ((i = u8.indexOf(0x46, i)) >= 0 && i < stop) {
+      const at = a + i;
+      if ((at === first || u8[i - 1] === 0x0a) && u8[i + 1] === 0x72 && u8[i + 2] === 0x6f && u8[i + 3] === 0x6d && u8[i + 4] === 0x20 && at >= skipUntil) {
+        let e = u8.indexOf(0x0a, i); if (e < 0) e = u8.length;
+        const line = BIN(u8.subarray(i, Math.min(e, i + 1000))).replace(/\r$/, '');
+        let e2 = u8.indexOf(0x0a, e + 1); if (e2 < 0) e2 = u8.length;
+        const next = BIN(u8.subarray(Math.min(e + 1, u8.length), Math.min(e2, e + 300))).replace(/\r$/, '');
+        const prevBlank = at === first || (i >= 2 && (u8[i - 2] === 0x0a || (u8[i - 2] === 0x0d && u8[i - 3] === 0x0a)));
+        const headerNext = /^[\x21-\x39\x3b-\x7e]+:/.test(next) && /\d/.test(line);
+        let emptyMsg = false; // an empty message: From_ line, blank line, then another From_ line or EOF
+        if (!headerNext && FROM_LINE.test(line) && (next === '' || a + e + 1 >= size)) {
+          if (prevBlank) emptyMsg = true;
+          else {
+            const afterBlank = e2 + 1;
+            let e3 = u8.indexOf(0x0a, afterBlank); if (e3 < 0) e3 = u8.length;
+            emptyMsg = afterBlank < u8.length && FROM_LINE.test(BIN(u8.subarray(afterBlank, Math.min(e3, afterBlank + 300))));
+          }
+        }
+        if (at === first || headerNext || emptyMsg) {
+          starts.push({ at, body: a + e + 1, line: detach(line.slice(0, 200)) });
+          if (!(starts.length % 5000)) onProgress(Math.min(1, at / size));
+          if (headerNext) { // honour Content-Length when the header block is within reach
+            let h = e + 1, bodyAt = -1, cl = -1;
+            for (let k = 0; k < 300 && h < u8.length; k++) { // walk header lines as bytes; decode only candidates
+              const nl = u8.indexOf(0x0a, h);
+              if (nl < 0) break;
+              const len = nl - h - (u8[nl - 1] === 0x0d ? 1 : 0);
+              if (len <= 0) { bodyAt = nl + 1; break; }
+              if ((u8[h] | 0x20) === 0x63 && len > 15 && (u8[h + 8] | 0x20) === 0x6c) {
+                const mm = /^content-length:[ \t]*(\d+)/i.exec(BIN(u8.subarray(h, nl)));
+                if (mm) cl = parseInt(mm[1], 10);
+              }
+              h = nl + 1;
+            }
+            if (cl >= 0 && bodyAt > 0) {
+              const end = a + bodyAt + cl;
+              if (end <= size) {
+                const peek = end + 8 - a <= u8.length ? BIN(u8.subarray(end - a, end + 8 - a)) : BIN(await readRange(file, end, Math.min(size, end + 8)));
+                if (end >= size - 2 || /^(\r?\n){0,2}From /.test(peek)) skipUntil = end;
+              }
+            }
+          }
+        }
+      }
+      i++;
+    }
+    onProgress(Math.min(1, (off + CH) / size));
+  }
+  // Leading content that is not preceded by a separator (or a file with none at all) is a message too.
+  if (!starts.length || starts[0].at > first) {
+    const head = BIN(lead.subarray(first, 2048));
+    if (/^[\x21-\x39\x3b-\x7e]+:/.test(head)) starts.unshift({ at: first, body: first, line: '' });
+  }
+  return starts;
+}
+
+class MboxSource {
+  constructor(file, path) { this.kind = 'mbox'; this.file = file; this.path = path; }
+  register(sess) { this.folder = folderFor(sess, MIME_GROUP, this.path); }
+  async index(sess) {
+    const name = this.file.name === 'mbox' ? this.path.split('/').pop() + '.mbox' : this.file.name;
+    sess.phase = `Scanning ${name}…`; updateStatus();
+    const starts = await scanMbox(this.file, p => { sess.phase = `Scanning ${name}… ${Math.round(p * 100)}%`; scheduleRefresh(); }, () => S === sess);
+    sess.phase = '';
+    if (!starts || S !== sess) return;
+    const ranges = starts.map((s, k) => ({ start: s.body, end: k + 1 < starts.length ? starts[k + 1].at : this.file.size, line: s.line }));
+    if (!ranges.length) {
+      if (this.explicit || this.file.size) sess.errors.push(`${name}: no messages found`); // empty files in folders are skipped quietly
+      if (!this.folder.total && !this.folder.msgs.length && ![...sess.folders.values()].some(f => f.path.startsWith(this.folder.path + '/'))) sess.folders.delete(this.folder.key);
+      renderSidebar(); return;
+    }
+    this.folder.total += ranges.length; sess.total += ranges.length;
+    renderSidebar();
+    const batches = makeBatches(ranges, r => [r.start, Math.min(r.end, r.start + HEAD)], 4 * 1048576, 400);
+    await pool(3, batches.map(b => async () => {
+      if (S !== sess) return;
+      let u8;
+      try { u8 = await readRange(this.file, b.start, b.end); } catch (err) { sess.failed += b.items.length; sess.done += b.items.length; return; }
+      for (const r of b.items) {
+        try {
+          let end = Math.min(r.end, r.start + HEAD);
+          let s = unescapeFrom(BIN(u8.subarray(r.start - b.start, end - b.start)));
+          if (end < r.end && !/\r?\n[ \t]*\r?\n/.test(s)) { // header block longer than HEAD
+            end = Math.min(r.end, r.start + 4 * 1048576);
+            s = unescapeFrom(BIN(await readRange(this.file, r.start, end)));
+          }
+          const m = mimeMeta(s, r.end > end);
+          if (m.deleted) { this.folder.total--; sess.total--; continue; }
+          if (!m.date) m.date = parseMailDate(r.line);
+          m.src = this; m.ref = r; m.f = this.folder;
+          addMessage(sess, m, this.folder);
+          const labs = new Set(m.labels.map(l => l.replace(/^\/+|\/+$/g, '')).filter(Boolean));
+          for (const lab of labs) {
+            const lf = folderFor(sess, MIME_GROUP, this.path + '/' + lab);
+            lf.total++; lf.msgs.push(m); if (m.unread) lf.unread++;
+          }
+        } catch (err) { sess.failed++; console.warn('Could not read mbox message', err); }
+        sess.done++;
+      }
+      scheduleRefresh();
+    }));
+  }
+  async raw(m) {
+    const u8 = await readRange(this.file, m.ref.start, m.ref.end);
+    let n = u8.length; // drop only the blank line mbox puts before the next "From "
+    if (n >= 4 && u8[n - 4] === 0x0d && u8[n - 3] === 0x0a && u8[n - 2] === 0x0d && u8[n - 1] === 0x0a) n -= 2;
+    else if (n >= 2 && u8[n - 2] === 0x0a && u8[n - 1] === 0x0a) n -= 1;
+    return binToBytes(unescapeFrom(BIN(u8.subarray(0, n))));
+  }
+  async loadFull(m) { const raw = await this.raw(m); return mimeMessage(BIN(raw), raw); }
+  batchesFor(list) {
+    list.sort((a, b) => a.ref.start - b.ref.start);
+    return makeBatches(list, m => [m.ref.start, m.ref.end]).map(b => ({ items: b.items, read: async () => ({ start: b.start, buf: await readRange(this.file, b.start, b.end) }) }));
+  }
+  async bodyText(m, chunk) {
+    const u8 = chunk && m.ref.start >= chunk.start && m.ref.end <= chunk.start + chunk.buf.length
+      ? chunk.buf.subarray(m.ref.start - chunk.start, m.ref.end - chunk.start) : await readRange(this.file, m.ref.start, m.ref.end);
+    const msg = mimeMessage(unescapeFrom(BIN(u8)), u8);
+    return msg.text + ' ' + stripHtml(msg.html);
+  }
+}
+
+class EmlSet {
+  constructor() { this.kind = 'eml'; this.items = []; }
+  register(sess) {
+    for (const it of this.items) { it.folder = folderFor(sess, MIME_GROUP, it.dir); it.folder.total++; sess.total++; }
+  }
+  async locate(it) {
+    if (it.off !== undefined) return;
+    it.off = 0; it.len = it.file.size;
+    const h = await readRange(it.file, 0, Math.min(it.file.size, 1024));
+    let lead = h[0] === 0xef && h[1] === 0xbb && h[2] === 0xbf ? 3 : 0; // BOM
+    while (lead < h.length && (h[lead] === 0x0a || h[lead] === 0x0d)) lead++;
+    const nl = h.indexOf(0x0a, lead), firstLine = BIN(h.subarray(lead, nl < 0 ? h.length : nl));
+    it.off = lead; it.len = it.file.size - lead;
+    if ((/^From (?!\S*:\s)\S+\s+[A-Za-z]{3}\s/.test(firstLine) || /^From [^:]*$/.test(firstLine)) && nl > 0) { // mbox-style "From " line
+      it.off = nl + 1; it.len = it.file.size - it.off;
+    }
+    if (/^\s*\d+\s*\r?$/.test(firstLine)) { // .emlx: byte count line, message, then an Apple plist
+      it.off = nl + 1;
+      const n = parseInt(firstLine, 10);
+      if (n > 0 && it.off + n <= it.file.size) it.len = n;
+      else { // bad count: end the message where the trailing plist starts
+        const tail = BIN(await readRange(it.file, Math.max(it.off, it.file.size - 65536), it.file.size));
+        const k = tail.lastIndexOf('\n<?xml version=');
+        it.len = (k >= 0 ? Math.max(it.off, it.file.size - 65536) + k + 1 : it.file.size) - it.off;
+      }
+    } else if (it.type === 'emlx') { // no count line: still drop the trailing plist
+      const start = Math.max(0, it.file.size - 65536);
+      const tail = BIN(await readRange(it.file, start, it.file.size));
+      const k = tail.lastIndexOf('\n<?xml version=');
+      if (k >= 0 && start + k + 1 > it.off) it.len = start + k + 1 - it.off;
+    }
+  }
+  async index(sess) {
+    await pool(8, this.items.map(it => async () => {
+      if (S !== sess) return;
+      try {
+        await this.locate(it);
+        if (!it.len) {
+          if (it.explicit) throw new Error('empty file');
+          it.folder.total--; sess.total--; return; // an empty file inside a folder: just skip it
+        }
+        let len = Math.min(it.len, HEAD), s = BIN(await readRange(it.file, it.off, it.off + len));
+        while (len < it.len && len < 4 * 1048576 && !/\r?\n[ \t]*\r?\n/.test(s)) { // header block longer than HEAD
+          len = Math.min(it.len, len * 4);
+          s = BIN(await readRange(it.file, it.off, it.off + len));
+        }
+        const m = mimeMeta(s, it.len > len);
+        m.src = this; m.ref = it; m.f = it.folder;
+        if (!m.date) m.date = it.file.lastModified || 0;
+        addMessage(sess, m, it.folder);
+      } catch (err) { sess.failed++; console.warn('Could not read', it.file.name, err); }
+      sess.done++;
+      scheduleRefresh();
+    }));
+  }
+  async raw(m) { await this.locate(m.ref); return readRange(m.ref.file, m.ref.off, m.ref.off + m.ref.len); }
+  async loadFull(m) { const raw = await this.raw(m); return mimeMessage(BIN(raw), raw); }
+  batchesFor(list) { return list.map(m => ({ items: [m], read: async () => null })); }
+  async bodyText(m) { const msg = await this.loadFull(m); return msg.text + ' ' + stripHtml(msg.html); }
+}
+
+/* ------------------------------ app state ------------------------------ */
+let S = null; // current session: everything opened together
+const V = { kind: 'all', key: null, q: '', terms: [], deep: false, asc: false, items: [], sel: null, deepGen: 0, deepHits: new Set(), deepStatus: '' };
+const ROW_H = 72;
+
+/* --------------------------- opening files --------------------------- */
+const extOf = name => { const i = name.lastIndexOf('.'); return i > 0 ? name.slice(i + 1).toLowerCase() : ''; };
+const dirOf = p => { const i = p.lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); };
+function cleanDir(d) {
+  const segs = d.split('/').filter(Boolean), out = [];
+  let inMailStore = false;
+  for (const s of segs) {
+    if (inMailStore && /^(Data|Messages|Attachments|\d+|[0-9A-F]{8}-[0-9A-F-]{27})$/i.test(s)) continue;
+    if (/\.mbox$/i.test(s)) inMailStore = true;
+    out.push(s.replace(/\.(mbox|mbx|sbd)$/i, ''));
+  }
+  return out.join('/');
+}
+function mboxFolderPath(path) {
+  const name = path.slice(path.lastIndexOf('/') + 1), dir = dirOf(path);
+  if (/^mbox$/i.test(name) && /\.mbox$/i.test(dir)) return cleanDir(dir) || 'Mailbox';
+  const base = name.replace(/\.(mbox|mbx)$/i, '') || 'Mailbox', d = cleanDir(dir);
+  return d ? d + '/' + base : base;
+}
+/* Inside folders, only look at mail-like files. Extensionless files are sniffed (Thunderbird
+   mailboxes); so are files with a Thunderbird .msf index beside them ("acme.com", "Mr. Smith"),
+   and names whose "extension" is not a plausible one. */
+function isCandidate(x, paths) {
+  const f = x.file, ext = extOf(f.name); // (size is checked later, in detectType: reading it is slow for big folders)
+  if (f.name.startsWith('.')) return false;
+  if (/^(eml|emlx|mbox|mbx|olm)$/.test(ext) || !ext) return true;
+  if (paths.has(x.path + '.msf')) return true;
+  return !/^[a-z0-9]{1,5}$/.test(ext); // e.g. "Mr. Smith", "Project v1.2-final"
+}
+const KEY_HEADERS = /^(From|Date|Message-I[Dd]|Received|Return-Path|Delivered-To|Subject)\s*:/m; // mail capitalisation, unlike YAML
+const ANY_HEADERS = /^(received|return-path|from|to|cc|subject|date|message-id|mime-version|delivered-to|x-[\w-]+|content-type|reply-to|sender|dkim-signature|arc-[\w-]+|authentication-results|thread-[\w-]+|in-reply-to|references)\s*:/gim;
+const looksLikeHeaders = t => /^[\x21-\x39\x3b-\x7e]+:[^\r\n]*\r?\n/.test(t) && KEY_HEADERS.test(t) && new Set((t.match(ANY_HEADERS) || []).map(h => h.toLowerCase())).size >= 2;
+async function detectType(file, explicit) {
+  const ext = extOf(file.name);
+  // Trusted by extension and not read up front: even reading .size costs seconds across 20,000 files.
+  if (ext === 'olm') return explicit || file.size ? 'olm' : null; // an explicit pick gets the "too small" message
+  if (ext === 'eml') return 'eml';
+  if (ext === 'emlx') return 'emlx';
+  if (ext === 'mbox' || ext === 'mbx') return 'mbox';
+  if (file.size === 0) return null;
+  const head = await readRange(file, 0, Math.min(file.size, 4096));
+  if (head[0] === 0x50 && head[1] === 0x4b && head[2] === 3 && head[3] === 4) return 'olm';
+  const t = BIN(head).replace(/^(\uf7ef\uf7bb\uf7bf|\ufeff)/, '').replace(/^[\r\n]+/, '');
+  if (/^\s*\d+[ \t]*\r?\n[\x21-\x39\x3b-\x7e]+:/.test(t)) return 'emlx'; // byte count line, then headers
+  if (/^From /.test(t)) { // mbox: a From_ line with a date, then a header line
+    const [l1, l2 = ''] = t.split(/\r?\n/, 2);
+    return /\d/.test(l1) && /^[\x21-\x39\x3b-\x7e]+:/.test(l2) ? 'mbox' : null;
+  }
+  return looksLikeHeaders(t) ? 'eml' : null;
+}
+
+let openGen = 0;
+async function openFiles(list) {
+  if (!list.length) return;
+  const gen = ++openGen;
+  const paths = new Set(list.map(x => x.path));
+  const cands = list.filter(x => x.explicit || isCandidate(x, paths));
+  const typed = [];
+  let checked = 0, lastShown = 0;
+  const showChecking = () => { // feedback while thousands of files are checked
+    if (gen !== openGen) return;
+    const msg = `Checking ${fmtN(checked)} of ${fmtN(cands.length)} files…`;
+    if (S) { $('#status').textContent = msg; } else { const b = $('#welcome-error'); b.textContent = msg; b.hidden = false; }
   };
-  try {
-    await sess.zip.open();
-  } catch (err) {
-    showWelcomeError(err.message || String(err));
+  if (cands.length > 200) { showChecking(); await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0))); } // let it paint
+  await pool(16, cands.map(x => async () => {
+    if (gen !== openGen) return;
+    try { const t = await detectType(x.file, x.explicit); if (t) typed.push({ ...x, type: t }); } catch { }
+    checked++;
+    if (cands.length > 200 && performance.now() - lastShown > 250) { lastShown = performance.now(); showChecking(); }
+  }));
+  if (gen !== openGen) return;
+  if (S) updateStatus(); else $('#welcome-error').hidden = true;
+  if (!typed.length) {
+    showWelcomeError('No Outlook archives (.olm), email files (.eml) or mailboxes (.mbox) were found in what you opened.');
     return;
   }
+  typed.sort((a, b) => a.path.localeCompare(b.path));
+  const sess = {
+    sources: [], messages: [], folders: new Map(), accounts: [], collections: [], errors: [],
+    total: 0, done: 0, failed: 0, skipped: 0, indexing: true, phase: '',
+  };
+  const typedFiles = new Set(typed.map(t => t.file));
+  sess.skipped = list.filter(x => x.explicit && !typedFiles.has(x.file)).length;
+  const olms = [];
+  for (const t of typed.filter(t => t.type === 'olm')) {
+    const src = new OlmSource(t.file);
+    try { await src.open(); olms.push(src); }
+    catch (err) { sess.errors.push(`${t.file.name}: ${err.message || err}`); sess.skipped++; }
+    if (gen !== openGen) return;
+  }
+  if (olms.length > 1) for (const src of olms) { const tag = src.file.name.replace(/\.olm$/i, ''); src.acc = a => `${a} · ${tag}`; }
+  sess.sources.push(...olms);
+  const emls = new EmlSet();
+  const usedPaths = new Set();
+  for (const t of typed) {
+    if (t.type === 'mbox') {
+      const base = mboxFolderPath(t.path);
+      let path = base, n = 1; // two "All mail.mbox" files picked together stay apart
+      while (usedPaths.has(path)) path = `${base} (${++n})`;
+      usedPaths.add(path);
+      const src = new MboxSource(t.file, path);
+      src.explicit = t.explicit;
+      sess.sources.push(src);
+    }
+    else if (t.type === 'eml' || t.type === 'emlx') emls.items.push({ file: t.file, type: t.type, explicit: t.explicit, dir: cleanDir(dirOf(t.path)) || 'Individual emails' });
+  }
+  if (emls.items.length) sess.sources.push(emls);
+  if (!sess.sources.length) { showWelcomeError(sess.errors.join('\n') || 'Nothing could be opened.'); return; }
+  if (gen !== openGen) return;
+
+  // A session can be put back later only if it had finished: its index loops stop once S changes.
+  const prev = S && !S.indexing ? { sess: S, title: document.title, label: $('#fname').textContent, kind: V.kind, key: V.key } : null;
   S = sess;
   Object.assign(V, { kind: 'all', key: null, items: [], sel: null, deepHits: new Set(), deepStatus: '' });
   V.deepGen++;
   $('#welcome').hidden = true; $('#app').hidden = false;
-  $('#fname').textContent = file.name;
-  document.title = file.name + ' · OLM Viewer';
+  const tops = new Set(typed.map(t => t.path.split('/')[0]));
+  const label = typed.length === 1 ? typed[0].file.name : tops.size === 1 && typed[0].path.includes('/') ? `${[...tops][0]} (${fmtN(typed.length)} files)` : `${fmtN(typed.length)} files`;
+  $('#fname').textContent = label;
+  document.title = label + ' · OLM Viewer';
   $('#q').value = ''; V.q = ''; V.terms = [];
   $('#listscroll').scrollTop = 0;
   clearReader();
 
-  const MSG = /^(.*?)\/?com\.microsoft\.__Messages\/(?:(.*)\/)?([^/]+\.xml)$/i;
-  const msgList = [], otherXml = [];
-  for (const e of sess.zip.entries) {
-    sess.byName.set(e.name, e);
-    const m = MSG.exec(e.name);
-    if (m) {
-      const f = folderFor(accountOf(m[1]), m[2] || 'Mail');
-      f.total++; sess.total++;
-      msgList.push([e, f]);
-    } else if (/\.xml$/i.test(e.name) && !/com\.microsoft\.__Attachments\//i.test(e.name)) {
-      otherXml.push(e);
-    }
-  }
+  for (const src of sess.sources) src.register(sess);
   renderSidebar(); refreshList(); updateStatus();
-
-  await loadCollections(sess, otherXml);
+  for (const src of sess.sources) {
+    if (S !== sess) return;
+    try { await src.index(sess); }
+    catch (err) { console.warn(err); sess.errors.push(`${src.file ? src.file.name : 'Email files'}: ${err.message || err}`); }
+  }
   if (S !== sess) return;
-  renderSidebar();
-
-  msgList.sort((a, b) => a[0].offset - b[0].offset); // read the file front to back, in large chunks
-  const batches = sess.zip.batches(msgList, x => x[0]);
-  let bi = 0;
-  const worker = async () => {
-    while (bi < batches.length && S === sess) {
-      const b = batches[bi++];
-      let chunk = null;
-      try { chunk = await sess.zip.readBatch(b); } catch (err) { console.warn('Chunk read failed', err); }
-      await Promise.all(b.items.map(async ([e, f]) => {
-        if (S !== sess) return;
-        try {
-          const m = extractMeta(await sess.zip.text(e, chunk));
-          m.e = e; m.f = f;
-          sess.messages.push(m); f.msgs.push(m);
-          if (m.unread) f.unread++;
-        } catch (err) {
-          sess.failed++; console.warn('Could not read', e.name, err);
-        }
-        sess.done++;
-      }));
-      scheduleRefresh();
+  sess.indexing = false; sess.phase = '';
+  if (!sess.messages.length && !sess.collections.length) { // nothing readable after all
+    const why = sess.errors.join('\n') || 'No messages were found in what you opened.';
+    if (prev) { // put back what was open before
+      S = prev.sess; document.title = prev.title; $('#fname').textContent = prev.label;
+      Object.assign(V, { kind: prev.kind, key: prev.key, sel: null });
+      renderSidebar(); refreshList(); updateStatus();
+      alert(why);
+    } else {
+      S = null; document.title = 'OLM Viewer';
+      showWelcomeError(why);
     }
-  };
-  await Promise.all(Array.from({ length: 3 }, worker));
-  if (S !== sess) return;
-  sess.indexing = false;
+    return;
+  }
   renderSidebar(); refreshList(); updateStatus();
   if (V.deep && V.terms.length) runDeepSearch();
 }
@@ -701,14 +1650,19 @@ function scheduleRefresh() {
 function updateStatus() {
   if (!S) return;
   const parts = [];
-  if (S.indexing) parts.push(`Reading messages… ${fmtN(S.done)} of ${fmtN(S.total)}`);
-  else parts.push(`${fmtN(S.messages.length)} messages`);
-  if (S.accounts.length > 1) parts.push(`${S.accounts.length} accounts`);
+  const plural = (n, w) => `${fmtN(n)} ${w}${n === 1 ? '' : 's'}`;
+  if (S.indexing) parts.push(S.phase || `Reading messages… ${fmtN(S.done)} of ${fmtN(S.total)}`);
+  else parts.push(plural(S.messages.length, 'message'));
+  const accounts = S.accounts.filter(a => a !== MIME_GROUP).length;
+  if (accounts > 1) parts.push(`${accounts} accounts`);
   const items = S.collections.reduce((n, c) => n + c.items.length, 0);
   if (items) parts.push(`${fmtN(items)} other items`);
   if (S.failed) parts.push(`${fmtN(S.failed)} unreadable`);
+  if (S.skipped) parts.push(`${plural(S.skipped, 'file')} skipped`);
+  if (S.errors.length && !S.indexing) parts.push(`${plural(S.errors.length, 'problem')} (hover for details)`);
   if (V.deepStatus) parts.push(V.deepStatus);
   $('#status').textContent = parts.join(' · ');
+  $('#status').title = S.errors.join('\n');
   const pct = S.indexing && S.total ? (S.done / S.total) * 100 : 0;
   $('#progress > div').style.width = pct + '%';
   $('#progress').hidden = !S.indexing;
@@ -746,12 +1700,12 @@ function fieldValue(el, depth = 0) {
   }).filter(Boolean).join('\n');
 }
 
-async function loadCollections(sess, entries) {
-  for (const e of entries) {
+async function loadCollections(sess, src) {
+  for (const e of src.otherXml) {
     if (S !== sess) return;
     if (e.uncomp > 400 * 1048576) continue;
     try {
-      let txt = await sess.zip.text(e);
+      let txt = await src.zip.text(e);
       txt = txt.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
       const doc = new DOMParser().parseFromString(txt, 'application/xml');
       if (doc.getElementsByTagName('parsererror').length) continue;
@@ -760,17 +1714,16 @@ async function loadCollections(sess, entries) {
       if (!els.length) continue;
       const rk = root.localName.toLowerCase();
       const [label, ic] = KINDS[rk] || [humanize(root.localName), 'list'];
-      const prefix = e.name.split('/').slice(0, 2).join('/');
-      const account = accountOf(prefix);
+      const account = src.acc(accountOf(e.name.split('/').slice(0, 2).join('/')));
       const items = els.map(el => {
         const kids = [...el.children];
         const get = re => { const k = kids.find(k => re.test(k.localName) && k.textContent.trim()); return k ? k.textContent.trim() : ''; };
         const fields = [];
         for (const k of kids) {
           let v = fieldValue(k);
-          const label = humanize(k.localName);
-          if (/^(Is|Has|Get)\b/.test(label) && /^[01]$/.test(v)) v = v === '1' ? 'Yes' : 'No';
-          if (v) fields.push([label, v]);
+          const lab = humanize(k.localName);
+          if (/^(Is|Has|Get)\b/.test(lab) && /^[01]$/.test(v)) v = v === '1' ? 'Yes' : 'No';
+          if (v) fields.push([lab, v]);
         }
         let title = get(/DisplayName$/) || [get(/FirstName$/), get(/LastName$/)].filter(Boolean).join(' ')
           || get(/(Summary|Subject|Title)$/) || get(/Name$/);
@@ -791,7 +1744,7 @@ async function loadCollections(sess, entries) {
       });
       if (ic === 'contacts') items.sort((a, b) => a.title.localeCompare(b.title));
       else if (items.some(x => x.date)) items.sort((a, b) => b.date - a.date);
-      sess.collections.push({ label, icon: ic, account, items, entry: e });
+      sess.collections.push({ label, icon: ic, account, items });
     } catch (err) {
       console.warn('Could not read', e.name, err);
     }
@@ -808,9 +1761,9 @@ function renderSidebar() {
   const isActive = (k, key) => V.kind === k && (k === 'all' || V.key === key) ? ' active' : '';
   let h = `<div class="nav-item${isActive('all')}" data-kind="all">${icon('all')}<span class="name">All Messages</span><span class="count">${fmtN(S.total)}</span></div>`;
   for (const acc of S.accounts) {
-    const fs = [...S.folders.values()].filter(f => f.account === acc);
     const kids = new Map();
-    for (const f of fs) {
+    for (const f of S.folders.values()) {
+      if (f.account !== acc) continue;
       const i = f.path.lastIndexOf('/');
       const parent = i > 0 ? f.path.slice(0, i) : '';
       if (!kids.has(parent)) kids.set(parent, []);
@@ -887,6 +1840,8 @@ function renderRows() {
   const top = sc.scrollTop, h = sc.clientHeight || 800;
   const start = Math.max(0, Math.floor(top / ROW_H) - 4);
   const end = Math.min(V.items.length, Math.ceil((top + h) / ROW_H) + 4);
+  const fname = V.kind === 'folder' ? ((S.folders.get(V.key) || {}).name || '') : '';
+  const sentView = /^(sent|drafts)$/.test(folderIcon(fname)) || /outbox/i.test(fname);
   let out = '';
   for (let i = start; i < end; i++) {
     const m = V.items[i];
@@ -894,7 +1849,6 @@ function renderRows() {
     if (m.coll) {
       out += `<div class="row${sel}" data-i="${i}" style="top:${i * ROW_H}px"><div class="l1"><span class="who">${esc(m.title)}</span></div><div class="subj" style="color:var(--muted)">${esc(m.sub) || '&nbsp;'}</div><div class="prev">${esc(m.detail) || '&nbsp;'}</div></div>`;
     } else {
-      const sentView = V.kind === 'folder' && /sent|draft|outbox/.test(folderIcon((S.folders.get(V.key) || {}).name || '') + ' ' + ((S.folders.get(V.key) || {}).name || '').toLowerCase());
       const who = sentView && m.to.length ? 'To: ' + m.to.map(addrLabel).join(', ') : (m.from.length ? addrLabel(m.from[0]) : '(no sender)');
       out += `<div class="row${sel}${m.unread ? ' unread' : ''}" data-i="${i}" style="top:${i * ROW_H}px">
         <div class="l1"><span class="who">${esc(who)}</span><span class="when">${m.hasAtt ? icon('clip') : ''}${esc(fmtListDate(m.date))}</span></div>
@@ -958,33 +1912,32 @@ async function runDeepSearch() {
   const gen = ++V.deepGen;
   V.deepStatus = ''; updateStatus();
   if (!S || !V.deep || !V.terms.length || V.kind === 'coll') return;
-  const terms = V.terms, sess = S;
-  const cand = baseItems().filter(m => !terms.every(w => m.s.includes(w))).sort((a, b) => a.e.offset - b.e.offset);
-  const batches = sess.zip.batches(cand, m => m.e);
-  let bi = 0, done = 0, last = 0;
-  const worker = async () => {
-    while (bi < batches.length && gen === V.deepGen && S === sess) {
-      const b = batches[bi++];
-      let chunk = null;
-      try { chunk = await sess.zip.readBatch(b); } catch { }
-      await Promise.all(b.items.map(async m => {
-        if (gen !== V.deepGen) return;
-        try {
-          const xml = await sess.zip.text(m.e, chunk);
-          const hay = m.s + ' ' + (getText(xml, 'OPFMessageCopyBody') + ' ' + stripHtml(getText(xml, 'OPFMessageCopyHTMLBody'))).toLowerCase();
-          if (terms.every(w => hay.includes(w))) V.deepHits.add(m);
-        } catch { }
-        done++;
-      }));
-      const now = performance.now();
-      if (now - last > 400 && gen === V.deepGen) {
-        last = now;
-        V.deepStatus = `Searching message text… ${Math.round(done / cand.length * 100)}%`;
-        updateStatus(); refreshList();
-      }
+  const terms = V.terms, sess = S, hits = V.deepHits;
+  const cand = baseItems().filter(m => !terms.every(w => m.s.includes(w)));
+  const bySrc = new Map();
+  for (const m of cand) { if (!bySrc.has(m.src)) bySrc.set(m.src, []); bySrc.get(m.src).push(m); }
+  const batches = [];
+  for (const [src, list] of bySrc) for (const b of src.batchesFor(list)) batches.push({ src, ...b });
+  let done = 0, last = 0;
+  await pool(3, batches.map(b => async () => {
+    if (gen !== V.deepGen || S !== sess) return;
+    let chunk = null;
+    try { chunk = await b.read(); } catch { }
+    await Promise.all(b.items.map(async m => {
+      if (gen !== V.deepGen) return;
+      try {
+        const hay = m.s + ' ' + (await b.src.bodyText(m, chunk)).toLowerCase();
+        if (gen === V.deepGen && terms.every(w => hay.includes(w))) hits.add(m);
+      } catch { }
+      done++;
+    }));
+    const now = performance.now();
+    if (now - last > 400 && gen === V.deepGen) {
+      last = now;
+      V.deepStatus = `Searching message text… ${Math.round(done / cand.length * 100)}%`;
+      updateStatus(); refreshList();
     }
-  };
-  await Promise.all(Array.from({ length: 3 }, worker));
+  }));
   if (gen !== V.deepGen) return;
   V.deepStatus = ''; updateStatus(); refreshList();
 }
@@ -996,54 +1949,45 @@ function clearReader() {
   readerToken++; revokeAll(); current = null;
   $('#reader').innerHTML = '<div class="empty">No message selected</div>';
 }
-
-function findEntry(url) {
-  if (!url || !S) return null;
-  const u = url.replace(/^file:\/\//i, '').replace(/^\/+/, '');
-  const tries = [u];
-  try { const d = decodeURIComponent(u); if (d !== u) tries.push(d); } catch { }
-  for (const t of tries) { const e = S.byName.get(t); if (e) return e; }
-  if (!S.byBase) {
-    S.byBase = new Map();
-    for (const e of S.zip.entries) {
-      const b = e.name.slice(e.name.lastIndexOf('/') + 1);
-      if (!S.byBase.has(b)) S.byBase.set(b, []);
-      S.byBase.get(b).push(e);
-    }
-  }
-  for (const t of tries) {
-    const list = S.byBase.get(t.slice(t.lastIndexOf('/') + 1));
-    if (!list) continue;
-    const hit = list.find(e => e.name.endsWith('/' + t) || t.endsWith('/' + e.name) || t.endsWith(e.name));
-    if (hit) return hit;
-    if (list.length === 1) return list[0];
-  }
-  return null;
-}
 const normCid = c => { let s = (c || '').trim().replace(/^cid:/i, '').replace(/^<|>$/g, ''); try { s = decodeURIComponent(s); } catch { } return s.toLowerCase(); };
+
+async function prepareCids(msg, tok) {
+  msg.cidMap = new Map();
+  if (!msg.html || !/cid:/i.test(msg.html)) return;
+  for (const a of msg.atts) {
+    if (!a.cid || !a.available) continue;
+    try {
+      const u = URL.createObjectURL(await a.getBlob());
+      if (tok !== readerToken) { URL.revokeObjectURL(u); return; }
+      blobUrls.push(u); msg.cidMap.set(normCid(a.cid), u);
+    } catch { }
+  }
+}
 
 async function showMessage(m) {
   const tok = ++readerToken;
   $('#reader').innerHTML = '<div class="empty"><span class="spin"></span>Loading…</div>';
   let msg;
-  try { msg = extractFull(await S.zip.text(m.e)); }
+  try { msg = await m.src.loadFull(m); }
   catch (err) { if (tok === readerToken) $('#reader').innerHTML = `<div class="empty">Could not read this message.<br><small>${esc(err.message)}</small></div>`; return; }
   if (tok !== readerToken) return;
   revokeAll();
-  msg.meta = m;
-  for (const a of msg.atts) a.entry = findEntry(a.url);
-  msg.cidMap = new Map();
-  if (msg.html && /cid:/i.test(msg.html)) {
-    for (const a of msg.atts) {
-      if (!a.cid || !a.entry) continue;
-      try {
-        const u = URL.createObjectURL(await S.zip.blob(a.entry, a.type));
-        blobUrls.push(u); msg.cidMap.set(normCid(a.cid), u);
-      } catch { }
-    }
-    if (tok !== readerToken) return;
-  }
-  current = { msg, mode: msg.html ? 'html' : 'text', remote: false };
+  msg.crumb = `${m.f.account} › ${m.f.path.replace(/\//g, ' › ')}`;
+  await prepareCids(msg, tok);
+  if (tok !== readerToken) return;
+  current = { msg, mode: msg.html ? 'html' : 'text', remote: false, parent: null };
+  renderMessage();
+}
+
+async function openNested(a) {
+  const tok = readerToken, parent = current;
+  const raw = new Uint8Array(await (await a.getBlob()).arrayBuffer());
+  if (tok !== readerToken) return;
+  const msg = mimeMessage(BIN(raw), raw);
+  msg.crumb = 'Attached to “' + (parent.msg.subject || '(no subject)') + '”';
+  await prepareCids(msg, tok);
+  if (tok !== readerToken) return;
+  current = { msg, mode: msg.html ? 'html' : 'text', remote: false, parent };
   renderMessage();
 }
 
@@ -1056,22 +2000,25 @@ function addrList(label, list, limit = 8) {
 
 function renderMessage() {
   const { msg } = current;
-  const m = msg.meta;
   const from = msg.from[0] || { name: '', email: '' };
-  const hasRemote = !!msg.html && /\b(?:src|background|srcset)\s*=\s*["']?\s*(?:https?:)?\/\/|url\(\s*["']?\s*(?:https?:)?\/\//i.test(msg.html);
+  if (msg.hasRemote === undefined)
+    msg.hasRemote = !!msg.html && (/(?:\b(?:src|background|srcset|poster)\s*=|url\(|@import)\s*["']?(?:https?:)?\/\//i.test(msg.html)
+      || /<link\b[^<>]*\bhref\s*=\s*["']?(?:https?:)?\/\//i.test(msg.html));
+  const hasRemote = msg.hasRemote;
   const modes = [];
   if (msg.html) modes.push(['html', 'Formatted']);
   if (msg.text) modes.push(['text', 'Plain text']);
   modes.push(['xml', 'Source']);
-  const f = m.f;
   const atts = msg.atts.map((a, i) => {
     const ext = (a.name.match(/\.([a-z0-9]{1,5})$/i) || [, ''])[1];
-    return `<button class="att${a.entry ? '' : ' missing'}" data-att="${i}" title="${a.entry ? 'Save ' + esc(a.name) : 'This attachment is not included in the archive'}">
-      ${ext ? `<span class="ext" style="background:hsl(${hue(ext.toLowerCase())} 45% 48%)">${esc(ext)}</span>` : icon('clip')}
-      <span class="nm">${esc(a.name)}</span><span class="sz">${esc(fmtSize(a.size || (a.entry && a.entry.uncomp)))}</span></button>`;
+    const tip = !a.available ? 'This attachment is not included in the archive' : a.nested ? 'Open the attached message' : 'Save ' + cleanName(a.name);
+    return `<button class="att${a.available ? '' : ' missing'}" data-att="${i}" title="${esc(tip)}">
+      ${a.nested ? icon('all') : ext ? `<span class="ext" style="background:hsl(${hue(ext.toLowerCase())} 45% 48%)">${esc(ext)}</span>` : icon('clip')}
+      <span class="nm">${esc(cleanName(a.name))}</span><span class="sz">${esc(fmtSize(a.size))}</span></button>`;
   }).join('');
 
   $('#reader').innerHTML = `
+    ${current.parent ? `<div class="backbar"><button class="btn" id="act-back">‹ Back to “${esc(current.parent.msg.subject || '(no subject)')}”</button></div>` : ''}
     <div class="msg-head">
       <div class="msg-actions">
         ${modes.length > 1 ? `<div class="seg">${modes.map(([k, l]) => `<button data-mode="${k}" class="${current.mode === k ? 'on' : ''}">${l}</button>`).join('')}</div>` : ''}
@@ -1088,7 +2035,7 @@ function renderMessage() {
         </div>
         <div class="date-full">${esc(fmtFull(msg.sent || msg.date))}</div>
       </div>
-      <div class="crumb">${esc(f.account)} › ${esc(f.path.replace(/\//g, ' › '))}</div>
+      <div class="crumb">${esc(msg.crumb)}</div>
     </div>
     ${atts ? `<div class="atts">${atts}</div>` : ''}
     ${hasRemote && current.mode === 'html' && !current.remote ? `<div class="banner">Remote images are blocked to protect your privacy. <button class="btn" id="act-remote">Load images</button></div>` : ''}
@@ -1099,19 +2046,23 @@ function renderMessage() {
 $('#reader').addEventListener('click', async e => {
   const t = e.target.closest('button'); if (!t || !current) return;
   if (t.dataset.mode) { current.mode = t.dataset.mode; renderMessage(); }
+  else if (t.id === 'act-back') { current = current.parent; renderMessage(); }
   else if (t.id === 'act-remote') { current.remote = true; renderMessage(); }
   else if (t.id === 'act-print') { try { $('#body').contentWindow.focus(); $('#body').contentWindow.print(); } catch { window.print(); } }
-  else if (t.id === 'act-eml') { t.disabled = true; try { await exportEml(current.msg); } finally { t.disabled = false; } }
+  else if (t.id === 'act-eml') { t.disabled = true; try { await current.msg.saveEml(); } catch (err) { alert('Could not save this message: ' + err.message); } finally { t.disabled = false; } }
   else if (t.dataset.more) {
     const key = { To: 'to', Cc: 'cc', Bcc: 'bcc', 'Reply-To': 'replyTo' }[t.dataset.more];
     t.parentElement.outerHTML = addrList(t.dataset.more, current.msg[key], 1e9);
   }
   else if (t.dataset.att) {
     const a = current.msg.atts[+t.dataset.att];
-    if (!a.entry) return;
+    if (!a.available) return;
     t.disabled = true;
-    try { download(await S.zip.blob(a.entry, a.type), safeName(a.name)); }
-    catch (err) { alert('Could not extract this attachment: ' + err.message); }
+    try {
+      if (a.nested) await openNested(a);
+      else download(await a.getBlob(), safeName(a.name));
+    }
+    catch (err) { alert('Could not open this attachment: ' + err.message); }
     finally { t.disabled = false; }
   }
 });
@@ -1123,8 +2074,8 @@ function autolink(text) {
 function buildDoc() {
   const { msg, mode, remote } = current;
   const csp = remote
-    ? "default-src 'none'; img-src * data: blob:; style-src * 'unsafe-inline'; font-src * data:; media-src * data: blob:"
-    : "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:";
+    ? "default-src 'none'; img-src * data: blob:; style-src * 'unsafe-inline'; font-src * data:; media-src * data: blob:; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    : "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-src 'none'";
   const from = msg.from[0] || {};
   const printHead = `<div id="olmv-print"><h2 style="margin:0 0 8px;font-size:18px">${esc(msg.subject)}</h2>
     <div><b>From:</b> ${esc(addrFull(from))}</div>
@@ -1138,15 +2089,39 @@ function buildDoc() {
     #olmv-print{display:none;font:12px/1.5 -apple-system,Arial,sans-serif;color:#000}
     @media print{#olmv-print{display:block}body{margin:0}}</style>`;
   if (mode === 'xml') {
-    return `<!doctype html><html><head><meta charset="utf-8">${baseCss}</head><body><pre class="olmv">${esc(msg.xml)}</pre></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8">${baseCss}</head><body><pre class="olmv">${esc(msg.sourceText())}</pre></body></html>`;
   }
   if (mode === 'text' || !msg.html) {
     const body = msg.text || stripHtml(msg.html || '').trim() || '(This message has no text.)';
     return `<!doctype html><html><head><meta charset="utf-8">${baseCss}</head><body>${printHead}<pre class="olmv" style="font:14px/1.55 -apple-system,BlinkMacSystemFont,Arial,sans-serif">${autolink(body)}</pre></body></html>`;
   }
-  const doc = new DOMParser().parseFromString(msg.html, 'text/html');
-  doc.querySelectorAll('script, noscript, base, meta[http-equiv], iframe, frame, frameset, object, embed, applet, link[rel="import"]').forEach(n => n.remove());
-  if (msg.cidMap.size) {
+  // Serializing and re-parsing HTML can resurrect elements (mXSS), so clean and re-serialize until the
+  // output stops changing; the string that is checked is then exactly what the iframe will parse.
+  const BAD = 'script, noscript, template, base, meta[http-equiv], iframe, frame, frameset, object, embed, applet, portal, link[rel="import"], mglyph, malignmark';
+  const clean = d => {
+    d.querySelectorAll(BAD).forEach(n => n.remove());
+    // The parser drops one newline right after <pre>/<textarea>/<listing> and the serializer does not
+    // add it back, so restore it; otherwise the output never stops changing.
+    d.querySelectorAll('pre, textarea, listing').forEach(el => { const f = el.firstChild; if (f && f.nodeType === 3 && f.data[0] === '\n') f.data = '\n' + f.data; });
+    d.querySelectorAll('a, area').forEach(a => { // links always open a new, unlinked tab
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener noreferrer');
+      a.removeAttribute('ping');
+    });
+  };
+  let doc = null, out = msg.html, stable = false;
+  for (let pass = 0; pass < 8; pass++) {
+    const d = new DOMParser().parseFromString(out, 'text/html');
+    clean(d);
+    const o2 = '<!doctype html>' + d.documentElement.outerHTML;
+    doc = d;
+    if (o2 === out) { stable = true; break; }
+    out = o2;
+  }
+  if (!stable) { // never settled: refuse to render it as HTML
+    return `<!doctype html><html><head><meta charset="utf-8">${baseCss}</head><body>${printHead}<pre class="olmv" style="font:14px/1.55 -apple-system,BlinkMacSystemFont,Arial,sans-serif">${autolink(msg.text || stripHtml(msg.html))}</pre></body></html>`;
+  }
+  if (msg.cidMap && msg.cidMap.size) {
     doc.querySelectorAll('[src], [background]').forEach(el => {
       for (const attr of ['src', 'background']) {
         const v = el.getAttribute(attr);
@@ -1169,22 +2144,21 @@ function showItem(item) {
   $('#reader').querySelectorAll('a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
 }
 
-/* ------------------------------ .eml export ------------------------------ */
+/* ------------------------------ .eml export (for .olm messages) ------------------------------ */
 function b64(u8) {
   let s = '';
   for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
   return btoa(s).replace(/.{76}(?=.)/g, '$&\r\n');
 }
-const enc = new TextEncoder();
 function encWord(s) {
   if (!/[^\x20-\x7e]/.test(s)) return s;
   const words = []; let cur = '';
   for (const ch of s) {
-    if (enc.encode(cur + ch).length > 45) { words.push(cur); cur = ''; }
+    if (textEnc.encode(cur + ch).length > 45) { words.push(cur); cur = ''; }
     cur += ch;
   }
   if (cur) words.push(cur);
-  return words.map(w => '=?UTF-8?B?' + btoa(String.fromCharCode(...enc.encode(w))) + '?=').join('\r\n ');
+  return words.map(w => '=?UTF-8?B?' + btoa(String.fromCharCode(...textEnc.encode(w))) + '?=').join('\r\n ');
 }
 function encAddr(a) {
   if (!a.email) return encWord(a.name || '');
@@ -1192,7 +2166,7 @@ function encAddr(a) {
   const n = /[^\x20-\x7e]/.test(a.name) ? encWord(a.name) : '"' + a.name.replace(/(["\\])/g, '\\$1') + '"';
   return `${n} <${a.email}>`;
 }
-async function exportEml(msg) {
+async function exportOlmEml(msg) {
   const B = '----=_olmv_' + Math.random().toString(36).slice(2);
   const B2 = B + '_alt';
   const L = [];
@@ -1208,12 +2182,12 @@ async function exportEml(msg) {
   L.push('MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${B}"`, '', 'This is a multi-part message in MIME format.', '');
   L.push('--' + B, `Content-Type: multipart/alternative; boundary="${B2}"`, '');
   const text = msg.text || stripHtml(msg.html || '').trim();
-  L.push('--' + B2, 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: base64', '', b64(enc.encode(text)));
-  if (msg.html) L.push('--' + B2, 'Content-Type: text/html; charset=utf-8', 'Content-Transfer-Encoding: base64', '', b64(enc.encode(msg.html)));
+  L.push('--' + B2, 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: base64', '', b64(textEnc.encode(text)));
+  if (msg.html) L.push('--' + B2, 'Content-Type: text/html; charset=utf-8', 'Content-Transfer-Encoding: base64', '', b64(textEnc.encode(msg.html)));
   L.push('--' + B2 + '--', '');
   for (const a of msg.atts) {
-    if (!a.entry) continue;
-    const data = await S.zip.data(a.entry);
+    if (!a.available) continue;
+    const data = new Uint8Array(await (await a.getBlob()).arrayBuffer());
     const fn = encodeURIComponent(a.name).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
     L.push('--' + B, `Content-Type: ${a.type}; name="${encWord(a.name).replace(/"/g, '')}"`,
       `Content-Disposition: ${a.cid && msg.html && msg.html.toLowerCase().includes('cid:' + normCid(a.cid)) ? 'inline' : 'attachment'}; filename*=UTF-8''${fn}`,
@@ -1227,19 +2201,43 @@ async function exportEml(msg) {
 
 /* --------------------------- file picking / drop --------------------------- */
 function showWelcomeError(msg) {
+  if (S) { alert(msg); return; }
   $('#app').hidden = true; $('#welcome').hidden = false;
   const b = $('#welcome-error'); b.textContent = msg; b.hidden = false;
 }
+const fromInput = (files, explicit) => [...files].map(f => ({ file: f, path: f.webkitRelativePath || f.name, explicit: explicit && !f.webkitRelativePath }));
+async function fromDrop(dt) {
+  const entries = [...(dt.items || [])].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return fromInput(dt.files, true);
+  const out = [];
+  const walk = async (entry, top) => {
+    if (entry.isFile) {
+      try { out.push({ file: await new Promise((res, rej) => entry.file(res, rej)), path: entry.fullPath.replace(/^\/+/, ''), explicit: top }); } catch { }
+    } else if (entry.isDirectory) {
+      const r = entry.createReader();
+      for (;;) {
+        const batch = await new Promise((res, rej) => r.readEntries(res, rej)).catch(() => []);
+        if (!batch.length) break;
+        for (const e of batch) await walk(e, false);
+      }
+    }
+  };
+  for (const e of entries) await walk(e, true);
+  return out;
+}
 $('#pick').addEventListener('click', () => $('#file').click());
+$('#pick-dir').addEventListener('click', () => $('#dir').click());
 $('#open-another').addEventListener('click', () => $('#file').click());
-$('#file').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) openFile(f); });
+$('#open-dir').addEventListener('click', () => $('#dir').click());
+$('#file').addEventListener('change', e => { const l = fromInput(e.target.files, true); e.target.value = ''; openFiles(l); });
+$('#dir').addEventListener('change', e => { const l = fromInput(e.target.files, false); e.target.value = ''; openFiles(l); });
 let dragDepth = 0;
 window.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; $('#dropzone').classList.add('over'); });
 window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#dropzone').classList.remove('over'); } });
 window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('drop', e => {
   e.preventDefault(); dragDepth = 0; $('#dropzone').classList.remove('over');
-  const f = e.dataTransfer.files[0]; if (f) openFile(f);
+  fromDrop(e.dataTransfer).then(openFiles);
 });
 </script>
 </body>
